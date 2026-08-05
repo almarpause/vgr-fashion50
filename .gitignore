@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# runtime output / logs
+logs/
+audit/
+
+# generated artifacts — rebuilt by the GitHub Action (and locally by the tools)
+Fashion50_Index.xlsx
+Fashion50_Dashboard.html
+fashion50_data.json
+state.json
+site/
+.verify_tmp*.xlsx

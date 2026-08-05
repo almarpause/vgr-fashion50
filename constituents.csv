@@ -1,0 +1,51 @@
+name,yahoo_ticker,google_ticker,trading_currency,segment,country_hq,ir_url
+LVMH,MC.PA,MC:EPA,EUR,Luxury,France,https://www.lvmh.com/en/investors
+Hermes International,RMS.PA,RMS:EPA,EUR,Luxury,France,https://finance.hermes.com/en/investors/
+Inditex (Zara),ITX.MC,ITX:BME,EUR,Fashion,Spain,https://www.inditex.com/itxcomweb/en/investors/finance
+Fast Retailing (Uniqlo),9983.T,9983:TYO,JPY,Fashion,Japan,https://www.fastretailing.com/eng/ir/
+Compagnie Financiere Richemont,CFR.SW,CFR:SWX,CHF,Luxury-Jewellery/Watches,Switzerland,https://www.richemont.com/investors/
+Christian Dior SE,CDI.PA,CDI:EPA,EUR,Luxury,France,https://www.dior-finance.com/en/
+EssilorLuxottica,EL.PA,EL:EPA,EUR,Luxury-Eyewear,France,https://www.essilorluxottica.com/en/investors/
+Nike,NKE,NKE:NYSE,USD,Sportswear,USA,https://investors.nike.com/
+Titan Company,TITAN.NS,TITAN:NSE,INR,Luxury-Jewellery/Watches,India,https://www.titancompany.in/investors/investor-relations/quarterly-results
+adidas,ADS.DE,ADS:ETR,EUR,Sportswear,Germany,https://www.adidas-group.com/en/investors
+Kering,KER.PA,KER:EPA,EUR,Luxury,France,https://www.kering.com/en/finance/
+Tapestry,TPR,TPR:NYSE,USD,Luxury,USA,https://investors.tapestry.com/
+H&M,HM-B.ST,HM-B:STO,SEK,Fashion,Sweden,https://hmgroup.com/investors/
+Anta Sports,2020.HK,2020:HKG,HKD,Sportswear,China,https://ir.anta.com/en/index.php
+Ralph Lauren,RL,RL:NYSE,USD,Fashion,USA,https://investor.ralphlauren.com/
+Next plc,NXT.L,NXT:LON,GBP,Fashion,UK,https://www.nextplc.co.uk/investors
+ASICS,7936.T,7936:TYO,JPY,Sportswear,Japan,https://corp.asics.com/en/investor_relations
+Amer Sports,AS,AS:NYSE,USD,Sportswear,Finland,https://investors.amersports.com/overview/default.aspx
+Moncler,MONC.MI,MONC:BIT,EUR,Luxury,Italy,https://www.monclergroup.com/en/investor-relations
+Deckers Brands,DECK,DECK:NYSE,USD,Sportswear/Footwear,USA,https://ir.deckers.com/
+Chow Tai Fook,1929.HK,1929:HKG,HKD,Luxury-Jewellery,Hong Kong,https://www.ctfjewellerygroup.com/en/investor-relations/
+lululemon athletica,LULU,LULU:NASDAQ,USD,Sportswear,Canada/USA,https://corporate.lululemon.com/investors
+Prada,1913.HK,1913:HKG,HKD,Luxury,Italy,https://www.pradagroup.com/en/investors/investor-relations.html
+Aritzia,ATZ.TO,ATZ:TSE,CAD,Fashion,Canada,https://investors.aritzia.com/investor-relations/default.aspx
+On Holding,ONON,ONON:NYSE,USD,Sportswear/Footwear,Switzerland,https://investors.on-running.com/home/default.aspx
+Gildan Activewear,GIL,GIL:NYSE,USD,Apparel,Canada,https://gildancorp.com/en/investors/
+LPP SA,LPP.WA,LPP:WSE,PLN,Fashion,Poland,https://www.lpp.com/en/investor-relations/
+Levi Strauss,LEVI,LEVI:NYSE,USD,Fashion,USA,https://investors.levistrauss.com/home/default.aspx
+Pandora,PNDORA.CO,PNDORA:CPH,DKK,Luxury-Jewellery,Denmark,https://www.pandoragroup.com/investor
+Birkenstock,BIRK,BIRK:NYSE,USD,Footwear,Germany,https://www.birkenstock-holding.com/investors
+Zalando,ZAL.DE,ZAL:ETR,EUR,Fashion-Ecommerce,Germany,https://corporate.zalando.com/en/investor-relations
+Gap Inc.,GAP,GAP:NYSE,USD,Fashion,USA,https://investors.gapinc.com/Investor-Relation/default.aspx
+Bosideng,3998.HK,3998:HKG,HKD,Fashion,China,https://company.bosideng.com/en/ir/
+Crocs,CROX,CROX:NASDAQ,USD,Footwear,USA,https://investors.crocs.com/overview/default.aspx
+VF Corporation,VFC,VFC:NYSE,USD,Apparel/Footwear,USA,https://www.vfc.com/investors
+Brunello Cucinelli,BC.MI,BC:BIT,EUR,Luxury,Italy,https://investor.brunellocucinelli.com/en
+Urban Outfitters,URBN,URBN:NASDAQ,USD,Fashion,USA,https://investor.urbn.com/
+Kalyan Jewellers,KALYANKJIL.NS,KALYANKJIL:NSE,INR,Luxury-Jewellery,India,https://www.kalyanjewellers.net/investors/
+JD Sports Fashion,JD.L,JD:LON,GBP,Sportswear-Retail,UK,https://www.jdplc.com/investor-relations/ir-overview/default.aspx
+Burberry,BRBY.L,BRBY:LON,GBP,Luxury,UK,https://www.burberryplc.com/investors
+Boot Barn,BOOT,BOOT:NYSE,USD,Footwear-Retail,USA,https://investor.bootbarn.com/overview/default.aspx
+Pepkor Holdings,PPH.JO,PPH:JSE,ZAR,Fashion-Retail,South Africa,https://www.pepkor.co.za/investor-relations/share-information/
+PUMA,PUM.DE,PUM:ETR,EUR,Sportswear,Germany,https://about.puma.com/en/investor-relations
+Li Ning,2331.HK,2331:HKG,HKD,Sportswear,China,https://ir.lining.com/en/
+Kontoor Brands,KTB,KTB:NYSE,USD,Apparel,USA,https://www.kontoorbrands.com/investors
+Page Industries,PAGEIND.NS,PAGEIND:NSE,INR,Apparel,India,https://pageind.com/pages/investors-relations
+Swatch Group,UHR.SW,UHR:SWX,CHF,Luxury-Watches,Switzerland,https://www.swatchgroup.com/en/investors-space
+Abercrombie & Fitch,ANF,ANF:NYSE,USD,Fashion,USA,https://corporate.abercrombie.com/investors/
+ABC-Mart,2670.T,2670:TYO,JPY,Footwear-Retail,Japan,https://www.abc-mart.co.jp/ir/
+PVH Corp,PVH,PVH:NYSE,USD,Fashion,USA,https://www.pvh.com/investors

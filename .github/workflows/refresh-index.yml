@@ -1,0 +1,64 @@
+name: Refresh VGR Fashion 50
+
+# Runs the whole pipeline in the cloud on a schedule (no computer needed),
+# regenerates the dashboard + data feed, and publishes them to GitHub Pages.
+# The published files:
+#   https://<user>.github.io/<repo>/                 -> the dashboard (index.html)
+#   https://<user>.github.io/<repo>/fashion50_data.json  -> the data feed
+# Your Lovable Intelligence page reads one of those (see WEB_DEPLOY.md).
+
+on:
+  schedule:
+    - cron: "0 6 * * *"        # daily at 06:00 UTC (08:00 CET). Adjust as you like.
+  workflow_dispatch: {}          # lets you run it manually from the Actions tab
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Rebuild index from live data
+        run: python backfill.py --fresh --base 2025-01-01 --years 2
+
+      - name: Refresh the early-warning watchlist
+        run: python preflight.py || true   # non-fatal: never block publishing
+
+      - name: Generate dashboard + data feed
+        run: python dashboard.py
+
+      - name: Assemble the published site
+        run: |
+          mkdir -p site
+          cp Fashion50_Dashboard.html site/index.html
+          cp fashion50_data.json site/fashion50_data.json
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
