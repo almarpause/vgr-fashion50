@@ -89,7 +89,7 @@ def main(argv: list[str]) -> int:
 
     print("Building index series ...")
     res = build_index_series(panel, settings)
-    print(f"  {len(res.rows)} weekly points, base {res.base_date} = 1000.00, "
+    print(f"  {len(res.rows)} daily points, base {res.base_date} = 1000.00, "
           f"latest {res.final_week} = {res.final_level:.2f}, "
           f"{len(res.events)} index-add events")
 
@@ -205,7 +205,7 @@ def main(argv: list[str]) -> int:
         ("Divisor rule", "On any add/drop/share change: Divisor_new = "
          "Divisor_old * (Sum caps AFTER / Sum caps BEFORE) so the level is "
          "continuous."),
-        ("Prices", "yfinance weekly Close (split-adjusted), normalised out of "
+        ("Prices", "yfinance daily Close (split-adjusted), normalised out of "
          "minor units (GBp/ZAc -> major /100) before FX."),
         ("FX", "frankfurter.app (ECB) weekly USD-per-unit; yfinance FX pairs "
          "fallback. Stored on the FX sheet."),

@@ -8,6 +8,8 @@ name: Refresh VGR Fashion 50
 # Your Lovable Intelligence page reads one of those (see WEB_DEPLOY.md).
 
 on:
+  push:
+    branches: [main]             # republish whenever the code changes
   schedule:
     - cron: "0 6 * * *"        # daily at 06:00 UTC (08:00 CET). Adjust as you like.
   workflow_dispatch: {}          # lets you run it manually from the Actions tab

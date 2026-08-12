@@ -37,7 +37,7 @@ def test_mid_series_add_is_continuous():
     }
     panel = _panel(price, {"A": "USD", "B": "USD", "C": "USD"},
                    {"A": 1_000_000, "B": 2_000_000, "C": 5_000_000}, WEEKS)
-    res = build_index_series(panel)
+    res = build_index_series(panel, grace_days=0)   # C is a genuine mid-series add
     # exactly one add event, at week 2
     assert len(res.events) == 1
     ev = res.events[0]

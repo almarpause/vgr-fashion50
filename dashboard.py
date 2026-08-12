@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Render a self-contained HTML dashboard from the workbook.
+"""Render a self-contained HTML dashboard + JSON feed from the workbook.
 
-Reads ``Fashion50_Index.xlsx`` and writes ``Fashion50_Dashboard.html`` — the
-index line chart, KPI tiles, segment mix, a full constituents table (latest
-price, YTD %, MoM %, full market cap, float %, index weight) and an interactive
-per-company evolution selector (each stock rebased to 1000 at the same base as
-the index).  Everything inline (no CDN, no external assets).
+Top of the page: the index % growth over Yesterday / L7D / L30D / MTD / YTD
+(colour-coded). Below: the index chart, the full constituents table (segment,
+price, yesterday & L7D price change, YTD, full market cap, float, index weight),
+and an interactive per-company evolution selector rebased to 1000. Everything is
+inline (no CDN); ``fashion50_data.json`` carries the same data for the website.
 
 Usage:
     python dashboard.py [--open]
@@ -43,7 +43,6 @@ def _read_workbook():
                         for i, h in enumerate(headers)})
         return out
 
-    # Prices sheet -> {ticker: [(date_iso, price), ...]}
     prices = {}
     if "Prices" in wb.sheetnames:
         ws = wb["Prices"]
@@ -70,7 +69,7 @@ def _fmt(x, nd=2):
         return "—"
 
 
-def _pct(x, nd=1):
+def _pct(x, nd=2):
     if x is None:
         return "—"
     return f"{x:+.{nd}f}%"
@@ -82,16 +81,64 @@ def _sign(v):
     return "up" if v >= 0 else "down"
 
 
-def _series_stats(series):
-    """(latest, ytd_%, mom_%) from a list of (date_iso, price)."""
-    s = [(d, p) for d, p in series if p is not None]
+def _simplify_segment(seg):
+    """Collapse to the primary bucket — all Luxury sub-segments (jewellery /
+    watches / eyewear) become 'Luxury', and likewise Sportswear/Footwear ->
+    Sportswear, Fashion-Ecommerce -> Fashion, etc. (text before the first - or /)."""
+    import re
+    s = (seg or "").strip()
     if not s:
-        return None, None, None
-    latest = s[-1][1]
-    y2026 = [p for d, p in s if d >= "2026-01-01"]
-    ytd = (latest / y2026[0] - 1) * 100 if y2026 and y2026[0] else None
-    mom = (latest / s[-5][1] - 1) * 100 if len(s) >= 5 and s[-5][1] else None
-    return latest, ytd, mom
+        return s
+    return re.split(r"[-/]", s)[0].strip() or s
+
+
+def _changes(series) -> dict:
+    """Percentage changes from a [(date_iso, value)] series (sorted ascending).
+
+    Returns latest + Yesterday / L7D / L30D / MTD / YTD, anchored on the latest
+    date in the series (not today), so it's correct even if the data lags a day.
+    """
+    s = [(d, v) for d, v in series if v is not None]
+    out = {"latest": None, "yesterday": None, "l7d": None, "l30d": None,
+           "mtd": None, "ytd": None}
+    if not s:
+        return out
+    ld, lv = s[-1]
+    out["latest"] = lv
+
+    def base_days(n):
+        target = datetime.date.fromisoformat(ld) - datetime.timedelta(days=n)
+        b = None
+        for d, v in s:
+            if datetime.date.fromisoformat(d) <= target:
+                b = v
+            else:
+                break
+        return b
+
+    def base_before(since_iso):
+        b = None
+        for d, v in s:
+            if d < since_iso:
+                b = v
+            else:
+                break
+        return b
+
+    if len(s) >= 2 and s[-2][1]:
+        out["yesterday"] = (lv / s[-2][1] - 1) * 100
+    for key, n in (("l7d", 7), ("l30d", 30)):
+        b = base_days(n)
+        if b:
+            out[key] = (lv / b - 1) * 100
+    y, m = ld[:4], ld[5:7]
+    bm = base_before(f"{y}-{m}-01")
+    if bm:
+        out["mtd"] = (lv / bm - 1) * 100
+    by = base_before(f"{y}-01-01")
+    if by:
+        out["ytd"] = (lv / by - 1) * 100
+    return out
 
 
 def _line_chart(series, width=1040, height=320, pad=48):
@@ -140,140 +187,96 @@ def _line_chart(series, width=1040, height=320, pad=48):
 </svg>"""
 
 
-def _bars(items, unit="%"):
-    if not items:
-        return "<p>—</p>"
-    mx = max(v for _, v in items) or 1.0
-    out = []
-    for label, v in items:
-        w = max(2.0, 100.0 * v / mx)
-        out.append(
-            f'<div class="bar-row"><span class="bar-label">{html.escape(str(label))}</span>'
-            f'<span class="bar-track"><span class="bar-fill" style="width:{w:.1f}%"></span></span>'
-            f'<span class="bar-val">{v:.2f}{unit}</span></div>')
-    return "".join(out)
+def _metric_tile(label, pct):
+    return (f'<div class="kpi"><div class="k-label">{label}</div>'
+            f'<div class="k-val {_sign(pct)}">{_pct(pct)}</div></div>')
 
 
-def _constituents_table(recs, cap_pct):
-    """recs: list of dicts sorted by capped weight desc."""
-    mx = max((r["wt"] for r in recs), default=1.0) or 1.0
+def _constituents_table(recs):
     body = []
     for r in recs:
-        bw = max(2.0, 100.0 * r["wt"] / mx)
-        capped = abs(r["wt"] - cap_pct) < 1e-3
-        raw_sub = (f"<div class='sub'>raw {r['raw']:.1f}%</div>" if capped else "")
-        tag = " <span class='tag'>cap</span>" if capped else ""
         nm = html.escape(str(r["name"]))
         if r.get("ir"):
             nm = (f'<a href="{html.escape(r["ir"])}" target="_blank" '
                   f'rel="noopener noreferrer">{nm}</a>')
         body.append(
             f"<tr><td class='r'>{r['rank']}</td>"
-            f"<td>{nm}{tag}"
-            f"<div class='sub'>{html.escape(str(r['ticker']))}</div></td>"
+            f"<td>{nm}<div class='sub'>{html.escape(str(r['ticker']))}</div></td>"
+            f"<td>{html.escape(str(r['segment']))}</td>"
             f"<td class='num'>{_fmt(r['price'])}<div class='sub'>{r['ccy']}</div></td>"
-            f"<td class='num {_sign(r['ytd'])}'>{_pct(r['ytd'])}</td>"
-            f"<td class='num {_sign(r['mom'])}'>{_pct(r['mom'])}</td>"
+            f"<td class='num {_sign(r['yday'])}'>{_pct(r['yday'], 2)}</td>"
+            f"<td class='num {_sign(r['l7d'])}'>{_pct(r['l7d'], 2)}</td>"
+            f"<td class='num {_sign(r['ytd'])}'>{_pct(r['ytd'], 1)}</td>"
             f"<td class='num'>{_fmt(r['fullcap'], 1)}</td>"
             f"<td class='num'>{r['float']:.0f}%</td>"
-            f"<td class='barcell'><span class='tbar'><span class='tfill' "
-            f"style='width:{bw:.1f}%'></span></span></td>"
-            f"<td class='num'>{r['wt']:.2f}%{raw_sub}</td></tr>")
+            f"<td class='num'>{r['wt']:.2f}%</td></tr>")
     return (
         "<table class='wt'><thead><tr>"
-        "<th class='r'>#</th><th>Brand</th><th class='num'>Price</th>"
-        "<th class='num'>YTD</th><th class='num'>MoM</th>"
-        "<th class='num'>Mkt cap $bn</th><th class='num'>Float</th>"
-        "<th>Weight</th><th class='num'>Index wt</th>"
+        "<th class='r'>#</th><th>Brand</th><th>Segment</th>"
+        "<th class='num'>Price</th><th class='num'>Yday</th><th class='num'>L7D</th>"
+        "<th class='num'>YTD</th><th class='num'>Mkt cap $bn</th>"
+        "<th class='num'>Float</th><th class='num'>Index wt</th>"
         "</tr></thead><tbody>" + "".join(body) + "</tbody></table>")
 
 
-def build_html() -> str:
-    weekly, audit, consts, unsched, prices = _read_workbook()
+def _prepare(weekly, audit, consts, prices):
+    """Shared computation for both the HTML and the JSON feed."""
     settings = DEFAULT_SETTINGS
-    cap_on = settings.effective_cap is not None
-    cap_pct = settings.effective_cap * 100 if cap_on else 999
-    weights_label = (f"post-{int(settings.effective_cap*100)}%-cap"
-                     if cap_on else "float-adjusted, uncapped")
-
-    series = [(str(r["run_date"]), float(r["index_level"]))
+    series = [(str(r["run_date"]), round(float(r["index_level"]), 4))
               for r in weekly if r.get("index_level") is not None]
-    latest = series[-1][1] if series else 0.0
-    since = (latest / 1000.0 - 1.0) * 100.0 if series else 0.0
-    ret_1y = None
-    if len(series) > 52:
-        past = series[-53][1]
-        ret_1y = (latest / past - 1.0) * 100.0 if past else None
-    last_row = weekly[-1] if weekly else {}
-    wow = last_row.get("weekly_return_%")
-    n_ok = last_row.get("n_ok") or 0
-    n_missing = last_row.get("n_missing") or 0
-
     seg_of = {c["yahoo_ticker"]: c.get("segment", "?") for c in consts}
     name_of = {c["yahoo_ticker"]: c.get("name") for c in consts}
     ir_of = {c.yahoo_ticker: c.ir_url for c in load_constituents()}
+    ccy_of = {r["ticker"]: r.get("currency") for r in audit}
+    ff_of = {r["ticker"]: (r.get("float_factor") or 1.0) for r in audit}
     caps = {r["ticker"]: float(r["cap_usd"]) for r in audit
             if r.get("cap_usd") and r.get("status") == "OK"}
     total_cap = sum(caps.values()) or 1.0
     weights = indexmath.compute_weights(caps, cap=settings.effective_cap)
-    ff_of = {r["ticker"]: (r.get("float_factor") or 1.0) for r in audit}
-    ccy_of = {r["ticker"]: r.get("currency") for r in audit}
-
     ranked = sorted(weights, key=weights.get, reverse=True)
+
     recs = []
     for i, t in enumerate(ranked, 1):
-        latest_p, ytd, mom = _series_stats(prices.get(t, []))
+        ch = _changes(prices.get(t, []))
         ff = ff_of.get(t, 1.0) or 1.0
         recs.append({
             "rank": i, "ticker": t, "name": name_of.get(t, t),
-            "ir": ir_of.get(t, ""),
-            "price": latest_p, "ccy": ccy_of.get(t, ""),
-            "ytd": ytd, "mom": mom,
-            "fullcap": caps[t] / ff / 1e9,        # full mkt cap $bn (no float)
-            "float": ff * 100,
-            "raw": caps[t] / total_cap * 100,     # uncapped weight
-            "wt": weights[t] * 100,               # capped index weight
+            "ir": ir_of.get(t, ""), "segment": _simplify_segment(seg_of.get(t)),
+            "price": ch["latest"], "ccy": ccy_of.get(t, ""),
+            "yday": ch["yesterday"], "l7d": ch["l7d"], "ytd": ch["ytd"],
+            "fullcap": caps[t] / ff / 1e9, "float": ff * 100,
+            "raw": caps[t] / total_cap * 100, "wt": weights[t] * 100,
         })
+    idx_metrics = _changes([(d, lv) for d, lv in series])
+    return series, recs, idx_metrics, name_of, ranked
 
-    top10 = [(name_of.get(t, t), weights[t] * 100) for t in ranked[:10]]
-    seg_w = {}
-    for t, w in weights.items():
-        seg_w[seg_of.get(t, "?")] = seg_w.get(seg_of.get(t, "?"), 0.0) + w * 100
-    sectors = sorted(seg_w.items(), key=lambda kv: -kv[1])
 
-    # Selector data: rebase each stock to 1000 at its first available point.
+def build_html() -> str:
+    weekly, audit, consts, unsched, prices = _read_workbook()
+    series, recs, m, name_of, ranked = _prepare(weekly, audit, consts, prices)
+    latest = m["latest"] or 0.0
+
     sel_prices = {t: [[d, p] for d, p in prices.get(t, [])] for t in ranked
                   if prices.get(t)}
     sel_names = {t: name_of.get(t, t) for t in sel_prices}
     idx_series = [[d, lv] for d, lv in series]
-    # Selector list sorted alphabetically by company name; default the drawn
-    # company to the largest constituent.
     sel_order = sorted((t for t in ranked if t in sel_prices),
                        key=lambda t: (name_of.get(t, t) or "").lower())
     default_t = next((t for t in ranked if t in sel_prices), None)
     options = "".join(
         f'<option value="{t}"{" selected" if t == default_t else ""}>'
-        f'{html.escape(str(name_of.get(t, t)))}</option>'
-        for t in sel_order)
+        f'{html.escape(str(name_of.get(t, t)))}</option>' for t in sel_order)
 
-    kpi = f"""
-    <div class="kpis">
-      <div class="kpi"><div class="k-label">Latest level</div>
-        <div class="k-val">{_fmt(latest)}</div>
-        <div class="k-sub {_sign(wow)}">{('WoW '+_fmt(wow)+'%') if wow is not None else 'base date'}</div></div>
-      <div class="kpi"><div class="k-label">Since inception</div>
-        <div class="k-val {_sign(since)}">{since:+.1f}%</div>
-        <div class="k-sub">base {series[0][0] if series else '—'} = 1000</div></div>
-      <div class="kpi"><div class="k-label">1-year return</div>
-        <div class="k-val {_sign(ret_1y)}">{(f'{ret_1y:+.1f}%') if ret_1y is not None else '—'}</div>
-        <div class="k-sub">52 weeks</div></div>
-      <div class="kpi"><div class="k-label">Constituents</div>
-        <div class="k-val">{n_ok}</div>
-        <div class="k-sub {'down' if n_missing else ''}">{n_missing} excluded/missing</div></div>
-      <div class="kpi"><div class="k-label">History</div>
-        <div class="k-val">{len(series)}</div>
-        <div class="k-sub">weekly points</div></div>
-    </div>"""
+    kpis = (
+        f'<div class="kpi hero"><div class="k-label">Index level</div>'
+        f'<div class="k-val">{_fmt(latest)}</div>'
+        f'<div class="k-sub">base {series[0][0] if series else "—"} = 1000 · '
+        f'as of {series[-1][0] if series else "—"}</div></div>'
+        + _metric_tile("Yesterday", m["yesterday"])
+        + _metric_tile("L7D", m["l7d"])
+        + _metric_tile("L30D", m["l30d"])
+        + _metric_tile("MTD", m["mtd"])
+        + _metric_tile("YTD", m["ytd"]))
 
     head = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -291,11 +294,12 @@ body {{ margin:0; background:var(--bg); color:var(--ink);
 .wrap {{ max-width:1120px; margin:0 auto; padding:28px 20px 60px; }}
 header h1 {{ margin:0 0 2px; font-size:24px; letter-spacing:-.02em; }}
 header .sub {{ color:var(--muted); font-size:13px; }}
-.kpis {{ display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin:22px 0; }}
+.kpis {{ display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin:22px 0; }}
 .kpi {{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }}
+.kpi.hero {{ grid-column:span 1; }}
 .k-label {{ color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }}
-.k-val {{ font-size:26px; font-weight:650; margin-top:4px; letter-spacing:-.02em; }}
-.k-sub {{ font-size:12px; color:var(--muted); margin-top:2px; }}
+.k-val {{ font-size:24px; font-weight:650; margin-top:4px; letter-spacing:-.02em; }}
+.k-sub {{ font-size:11px; color:var(--muted); margin-top:2px; }}
 .up {{ color:var(--up); }} .down {{ color:var(--down); }}
 .card {{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px 20px; margin:16px 0; }}
 .card h2 {{ margin:0 0 12px; font-size:15px; font-weight:600; }}
@@ -303,50 +307,36 @@ header .sub {{ color:var(--muted); font-size:13px; }}
 .grid {{ stroke:var(--line); stroke-width:1; }}
 .baseline {{ stroke:var(--muted); stroke-width:1; stroke-dasharray:4 4; opacity:.7; }}
 .axis {{ fill:var(--muted); font-size:11px; }}
-.cols {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }}
-.bar-row {{ display:grid; grid-template-columns:150px 1fr 62px; align-items:center; gap:10px; margin:7px 0; }}
-.bar-label {{ font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
-.bar-track {{ background:var(--line); border-radius:6px; height:12px; overflow:hidden; }}
-.bar-fill {{ display:block; height:100%; background:var(--accent); border-radius:6px; }}
-.bar-val {{ font-size:12px; color:var(--muted); text-align:right; font-variant-numeric:tabular-nums; }}
-ul.adds {{ margin:4px 0 0; padding-left:18px; color:var(--muted); font-size:13px; }}
 table.wt {{ width:100%; border-collapse:collapse; font-size:13px; }}
 table.wt th {{ text-align:left; color:var(--muted); font-weight:600; font-size:11px;
   text-transform:uppercase; letter-spacing:.03em; padding:6px 8px; border-bottom:1px solid var(--line); }}
 table.wt td {{ padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }}
 table.wt td.r {{ color:var(--muted); width:30px; text-align:right; font-variant-numeric:tabular-nums; }}
 table.wt th.num, table.wt td.num {{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }}
-.sub {{ color:var(--muted); font-size:11px; }}
-td.barcell {{ width:16%; }}
-.tbar {{ display:block; background:var(--line); border-radius:5px; height:9px; overflow:hidden; }}
-.tfill {{ display:block; height:100%; background:var(--accent); border-radius:5px; }}
-.tag {{ font-size:10px; background:var(--line); color:var(--muted); border-radius:4px; padding:1px 5px; }}
 table.wt a {{ color:var(--accent); text-decoration:none; }}
 table.wt a:hover {{ text-decoration:underline; }}
+.sub {{ color:var(--muted); font-size:11px; }}
 .legend {{ color:var(--muted); font-size:12px; margin-top:10px; }}
 select {{ background:var(--card); color:var(--ink); border:1px solid var(--line);
   border-radius:8px; padding:7px 10px; font-size:14px; max-width:320px; }}
 .cocap {{ color:var(--muted); font-size:13px; margin-top:6px; }}
 footer {{ color:var(--muted); font-size:12px; margin-top:22px; }}
-@media (max-width:820px) {{ .kpis {{ grid-template-columns:repeat(2,1fr); }}
-  .cols {{ grid-template-columns:1fr; }} td.barcell {{ display:none; }} }}
+@media (max-width:860px) {{ .kpis {{ grid-template-columns:repeat(3,1fr); }} }}
+@media (max-width:520px) {{ .kpis {{ grid-template-columns:repeat(2,1fr); }} }}
 </style></head>
 <body><div class="wrap">
 <header>
   <h1>VGR Fashion 50</h1>
-  <div class="sub">Market-cap weighted · divisor-based · float-adjusted · USD — {series[0][0] if series else ''} → {series[-1][0] if series else ''}</div>
+  <div class="sub">Market-cap weighted · float-adjusted · USD — daily, base {series[0][0] if series else ''} = 1000</div>
 </header>
-{kpi}
+{'<div class="kpis">' + kpis + '</div>'}
 <div class="card"><h2>Index level (base 1000)</h2>{_line_chart(series)}</div>
-<div class="cols">
-  <div class="card"><h2>Top 10 weights ({weights_label})</h2>{_bars(top10)}</div>
-  <div class="card"><h2>Segment mix</h2>{_bars(sectors)}</div>
-</div>
 <div class="card"><h2>All {len(recs)} constituents</h2>
-{_constituents_table(recs, cap_pct)}
-<div class="legend"><b>Index wt</b> is float-adjusted (S&P-style){', then capped at ' + str(int(cap_pct)) + '% (cap names show raw weight beneath)' if cap_on else ' — no cap applied'}.
-<b>Mkt cap</b> is full size (shares × price), <b>Float</b> the tradable share — e.g. Zara's larger
-cap but low float is why Uniqlo's index weight is higher. Price/YTD/MoM are the local share price.</div>
+{_constituents_table(recs)}
+<div class="legend"><b>Index wt</b> is the float-adjusted market-cap share.
+<b>Mkt cap</b> is full size (shares × price); <b>Float</b> the tradable share —
+e.g. Zara's larger cap but low float is why Uniqlo's index weight is higher.
+Price · Yday · L7D · YTD are the local share price.</div>
 </div>
 <div class="card"><h2>Company evolution — rebased to 1000 at the base date</h2>
   <select id="co">{options}</select>
@@ -390,7 +380,7 @@ function draw(t){
   document.getElementById("cochart").innerHTML=svg;
   const last=comp[comp.length-1][1], pct=(last/1000-1)*100;
   document.getElementById("cocap").innerHTML=
-    "<b style='color:var(--accent)'>"+NAMES[t]+"</b>: rebased 1000 → "+last.toFixed(1)+
+    "<b style='color:var(--accent)'>"+NAMES[t]+"</b>: rebased 1000 -> "+last.toFixed(1)+
     " ("+(pct>=0?"+":"")+pct.toFixed(1)+"% since base). Dashed grey = the index.";
 }
 const sel=document.getElementById("co");
@@ -406,90 +396,35 @@ draw(sel.value);
 
 
 def build_data() -> dict:
-    """Machine-readable feed for the website (VGR Intelligence / any front-end).
-
-    Everything the page needs to render natively: index history, the 50
-    constituents (price, YTD, MoM, full cap, float, weight, IR link), each
-    company's weekly series for the selector, segment mix, and the watchlist.
-    """
     weekly, audit, consts, unsched, prices = _read_workbook()
-    settings = DEFAULT_SETTINGS
-    cap_on = settings.effective_cap is not None
-
-    series = [(str(r["run_date"]), round(float(r["index_level"]), 4))
-              for r in weekly if r.get("index_level") is not None]
-    latest = series[-1][1] if series else 0.0
-    since = (latest / 1000.0 - 1.0) * 100.0 if series else 0.0
-
-    seg_of = {c["yahoo_ticker"]: c.get("segment", "?") for c in consts}
-    name_of = {c["yahoo_ticker"]: c.get("name") for c in consts}
-    ir_of = {c.yahoo_ticker: c.ir_url for c in load_constituents()}
-    ccy_of = {r["ticker"]: r.get("currency") for r in audit}
-    ff_of = {r["ticker"]: (r.get("float_factor") or 1.0) for r in audit}
-    caps = {r["ticker"]: float(r["cap_usd"]) for r in audit
-            if r.get("cap_usd") and r.get("status") == "OK"}
-    total_cap = sum(caps.values()) or 1.0
-    weights = indexmath.compute_weights(caps, cap=settings.effective_cap)
-    ranked = sorted(weights, key=weights.get, reverse=True)
-
-    constituents = []
-    for i, t in enumerate(ranked, 1):
-        p, ytd, mom = _series_stats(prices.get(t, []))
-        ff = ff_of.get(t, 1.0) or 1.0
-        constituents.append({
-            "rank": i, "ticker": t, "name": name_of.get(t, t),
-            "ir_url": ir_of.get(t, ""),
-            "price": round(p, 4) if p is not None else None,
-            "currency": ccy_of.get(t, ""),
-            "ytd_pct": round(ytd, 2) if ytd is not None else None,
-            "mom_pct": round(mom, 2) if mom is not None else None,
-            "full_cap_usd_bn": round(caps[t] / ff / 1e9, 3),
-            "float_pct": round(ff * 100, 1),
-            "raw_weight_pct": round(caps[t] / total_cap * 100, 4),
-            "weight_pct": round(weights[t] * 100, 4),
-        })
-
-    seg_w: dict[str, float] = {}
-    for t, w in weights.items():
-        seg_w[seg_of.get(t, "?")] = seg_w.get(seg_of.get(t, "?"), 0.0) + w * 100
-
-    # Watchlist (early-warning) — read the sheet if present.
-    watch = []
-    try:
-        from openpyxl import load_workbook
-        wb = load_workbook(config.WORKBOOK_PATH, data_only=True)
-        if "Watchlist" in wb.sheetnames:
-            ws = wb["Watchlist"]
-            hdr = [c.value for c in ws[1]]
-            for r in ws.iter_rows(min_row=2, values_only=True):
-                if not r or r[0] is None:
-                    continue
-                row = {hdr[j]: r[j] for j in range(min(len(hdr), len(r)))}
-                if str(row.get("severity")) in ("HIGH", "MEDIUM"):
-                    watch.append({k: (v if v is not None else None)
-                                  for k, v in row.items()})
-    except Exception:
-        pass
-
+    series, recs, m, name_of, ranked = _prepare(weekly, audit, consts, prices)
     return {
         "generated_at": datetime.datetime.now(datetime.timezone.utc)
         .isoformat(timespec="seconds"),
         "base_date": series[0][0] if series else None,
         "base_level": 1000.0,
         "latest_date": series[-1][0] if series else None,
-        "latest_level": latest,
-        "since_inception_pct": round(since, 2),
-        "weight_cap_enabled": cap_on,
-        "weight_cap_pct": settings.effective_cap * 100 if cap_on else None,
-        "n_constituents": len(constituents),
+        "latest_level": m["latest"],
+        "index_change": {"yesterday": _r(m["yesterday"]), "l7d": _r(m["l7d"]),
+                         "l30d": _r(m["l30d"]), "mtd": _r(m["mtd"]),
+                         "ytd": _r(m["ytd"])},
+        "n_constituents": len(recs),
         "index": [[d, lv] for d, lv in series],
-        "constituents": constituents,
+        "constituents": [{
+            "rank": r["rank"], "ticker": r["ticker"], "name": r["name"],
+            "ir_url": r["ir"], "segment": r["segment"],
+            "price": _r(r["price"], 4), "currency": r["ccy"],
+            "chg_yesterday_pct": _r(r["yday"]), "chg_l7d_pct": _r(r["l7d"]),
+            "ytd_pct": _r(r["ytd"], 1), "full_cap_usd_bn": _r(r["fullcap"], 3),
+            "float_pct": _r(r["float"], 1), "weight_pct": _r(r["wt"], 4),
+        } for r in recs],
         "prices": {t: [[d, round(p, 4)] for d, p in prices.get(t, [])]
                    for t in ranked if prices.get(t)},
-        "segments": sorted(([s, round(w, 3)] for s, w in seg_w.items()),
-                           key=lambda kv: -kv[1]),
-        "watchlist": watch,
     }
+
+
+def _r(x, nd=2):
+    return round(x, nd) if isinstance(x, (int, float)) else None
 
 
 def main(argv: list[str]) -> int:

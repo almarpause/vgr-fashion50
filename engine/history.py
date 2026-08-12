@@ -77,12 +77,12 @@ class HistoryPanel:
 # --------------------------------------------------------------------------- #
 # Network fetch
 # --------------------------------------------------------------------------- #
-def _download_prices(tickers: list[str], period: str):
+def _download_prices(tickers: list[str], period: str, interval: str = "1d"):
     import warnings
     warnings.filterwarnings("ignore")
     import pandas as pd
     import yfinance as yf
-    df = yf.download(tickers, period=period, interval="1wk",
+    df = yf.download(tickers, period=period, interval=interval,
                      auto_adjust=False, progress=False, threads=True)
     # Multi-ticker -> columns are a MultiIndex (field, ticker); single -> flat.
     if isinstance(df.columns, pd.MultiIndex):
@@ -111,15 +111,15 @@ def _fx_series_frankfurter(currency: str, start: str, end: str
         return {}
 
 
-def _repair_series(ticker: str, period: str, divisor: float
-                   ) -> dict[date, float]:
+def _repair_series(ticker: str, period: str, divisor: float,
+                   interval: str = "1d") -> dict[date, float]:
     """Per-ticker fallback when the bulk download returned a sparse column
     (rate-limited or partial).  Uses Ticker.history; empty on failure."""
     try:
         import warnings
         warnings.filterwarnings("ignore")
         import yfinance as yf
-        h = yf.Ticker(ticker).history(period=period, interval="1wk")
+        h = yf.Ticker(ticker).history(period=period, interval=interval)
         out: dict[date, float] = {}
         for ts, val in h["Close"].items():
             if val is None or val != val:
@@ -130,12 +130,13 @@ def _repair_series(ticker: str, period: str, divisor: float
         return {}
 
 
-def _fx_series_yf(currency: str, period: str) -> dict[date, float]:
+def _fx_series_yf(currency: str, period: str, interval: str = "1d"
+                  ) -> dict[date, float]:
     try:
         import warnings
         warnings.filterwarnings("ignore")
         import yfinance as yf
-        h = yf.Ticker(f"{currency}USD=X").history(period=period, interval="1wk")
+        h = yf.Ticker(f"{currency}USD=X").history(period=period, interval=interval)
         return {ts.date(): float(v) for ts, v in h["Close"].items()
                 if v == v and v > 0}
     except Exception:
@@ -161,13 +162,18 @@ def _sample_on_weeks(daily: dict[date, float], weeks: list[date]
 
 
 def fetch_weekly_history(constituents: list[Constituent], period: str = "5y",
-                         data_provider: DataProvider | None = None
-                         ) -> HistoryPanel:
-    """Build a HistoryPanel from live sources (bulk prices + FX + snapshot)."""
+                         data_provider: DataProvider | None = None,
+                         interval: str = "1d") -> HistoryPanel:
+    """Build a HistoryPanel from live sources (bulk prices + FX + snapshot).
+
+    ``interval`` is the yfinance bar size — "1d" (default) for a daily index
+    series, "1wk" for weekly.  The panel's ``weeks`` field then holds daily (or
+    weekly) dates; everything downstream is granularity-agnostic.
+    """
     data_provider = data_provider or DataProvider()
     tickers = [c.yahoo_ticker for c in constituents]
 
-    close = _download_prices(tickers, period)
+    close = _download_prices(tickers, period, interval)
     weeks = [ts.date() if hasattr(ts, "date") else ts for ts in close.index]
 
     # Current snapshot: shares, float, raw currency (held constant across history)
@@ -210,7 +216,7 @@ def fetch_weekly_history(constituents: list[Constituent], period: str = "5y",
 
         # Repair sparse columns (rate-limited/partial bulk download).
         if len(series) < MIN_HISTORY_WEEKS:
-            repaired = _repair_series(t, period, divisor)
+            repaired = _repair_series(t, period, divisor, interval)
             if len(repaired) > len(series):
                 series = repaired
 
@@ -230,7 +236,7 @@ def fetch_weekly_history(constituents: list[Constituent], period: str = "5y",
     for ccy in {v for v in currency.values() if v != "USD"}:
         daily = _fx_series_frankfurter(ccy, start, end)
         if not daily:
-            daily = _fx_series_yf(ccy, period)
+            daily = _fx_series_yf(ccy, period, interval)
         fx[ccy] = _sample_on_weeks(daily, weeks)
 
     return HistoryPanel(weeks=weeks, price=price, fx=fx, currency=currency,
@@ -270,8 +276,14 @@ class SeriesResult:
 
 def build_index_series(panel: HistoryPanel,
                        settings: Settings = DEFAULT_SETTINGS,
-                       base_level: float = 1000.0) -> SeriesResult:
-    """Walk the panel forward; seed base=1000; add IPO names via divisor rule."""
+                       base_level: float = 1000.0,
+                       grace_days: int = 15) -> SeriesResult:
+    """Walk the panel forward; seed base=1000; add IPO names via divisor rule.
+
+    ``grace_days``: names first trading within this many days of the series start
+    are founding members (staggered market holidays are not IPOs); only names
+    first trading later are genuine mid-series adds.
+    """
     weeks = list(panel.weeks)
     all_tickers = [t for t in panel.shares]      # tickers with a valid snapshot
     n_all = len(all_tickers)
@@ -285,15 +297,29 @@ def build_index_series(panel: HistoryPanel,
     rows: list[dict] = []
     events: list[DivisorEvent] = []
 
-    # ---- base week -------------------------------------------------------- #
+    # ---- base ------------------------------------------------------------- #
+    # Founding universe: every name whose first data point falls within a grace
+    # window of the series start counts as present at the base (staggered market
+    # holidays at the start — e.g. Jan 1-3 in Tokyo — must NOT look like IPOs).
+    # Only names first trading AFTER the window are genuine mid-series adds.
     w0 = weeks[0]
+    first_date: dict[str, date] = {}
+    for t in all_tickers:
+        ds = panel.price.get(t, {})
+        if ds:
+            first_date[t] = min(ds)
+
     base_caps: dict[str, float] = {}
     for t in all_tickers:
-        cap = panel.cap_usd(t, w0)
+        fd = first_date.get(t)
+        if fd is None or (fd - w0).days > grace_days:
+            continue                      # genuine late entrant -> added later
+        p0 = panel.price[t][fd]           # seed at its earliest available price
+        cap = panel.cap_usd(t, fd, p0)
         if cap is not None and cap > 0:
             base_caps[t] = cap
             active.add(t)
-            last_price[t] = panel.price[t][w0]
+            last_price[t] = p0
     if not base_caps:
         raise RuntimeError("no constituents have data at the base week")
     divisor = indexmath.base_divisor(base_caps, base_level)
