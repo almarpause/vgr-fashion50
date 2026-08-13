@@ -47,7 +47,7 @@ published version; nothing else to maintain:
 ```html
 <iframe
   src="https://<user>.github.io/<repo>/"
-  title="VGR Fashion 50"
+  title="VGR 50 — Largest Lifestyle Companies"
   style="width:100%;height:1600px;border:0;border-radius:16px;"
   loading="lazy">
 </iframe>
@@ -105,7 +105,7 @@ export default function FashionIndex() {
   return (
     <section className="space-y-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">VGR Fashion 50</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">VGR 50 — Largest Lifestyle Companies</h2>
         <p className="text-sm opacity-60">
           Market-cap weighted · float-adjusted · USD — base {d.base_date} = 1000 ·
           updated {new Date(d.generated_at).toLocaleDateString()}

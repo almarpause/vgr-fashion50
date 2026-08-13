@@ -281,7 +281,7 @@ def build_html() -> str:
     head = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VGR Fashion 50 — Dashboard</title>
+<title>VGR 50 — Largest Lifestyle Companies</title>
 <style>
 :root {{ --bg:#f7f7f8; --card:#fff; --ink:#1a1a1f; --muted:#6b7280;
   --line:#e5e7eb; --accent:#4f46e5; --up:#0f9d58; --down:#d1453b; }}
@@ -326,7 +326,7 @@ footer {{ color:var(--muted); font-size:12px; margin-top:22px; }}
 </style></head>
 <body><div class="wrap">
 <header>
-  <h1>VGR Fashion 50</h1>
+  <h1>VGR 50 — Largest Lifestyle Companies</h1>
   <div class="sub">Market-cap weighted · float-adjusted · USD — daily, base {series[0][0] if series else ''} = 1000</div>
 </header>
 {'<div class="kpis">' + kpis + '</div>'}
