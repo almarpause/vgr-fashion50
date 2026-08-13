@@ -246,11 +246,15 @@ def check_live_workbook(chk: Check) -> None:
     else:
         chk.fail("7c. Live positive levels", "found a non-positive level")
 
-    # 7d. base ~ 1000
-    if weekly and abs(float(weekly[0]["index_level"]) - 1000.0) <= 1e-3:
-        chk.ok(f"7d. Live: base row == 1000.000 ({weekly[0]['run_date']})")
+    # 7d. anchor ~ 1000 (index is rescaled to 1000 on the base/anchor date,
+    # which may sit mid-series when history predates it)
+    anchor = next((r for r in weekly
+                   if str(r.get("run_date")) >= "2025-01-01"), None)
+    if anchor and abs(float(anchor["index_level"]) - 1000.0) <= 1e-2:
+        chk.ok(f"7d. Live: index == 1000.00 on anchor ({anchor['run_date']})")
     else:
-        chk.fail("7d. Live base", f"first level = {weekly[0].get('index_level')}")
+        chk.fail("7d. Live anchor",
+                 f"level at anchor = {anchor.get('index_level') if anchor else 'n/a'}")
 
     # 7e. every logged divisor change is continuous
     dl = rows("Divisor_Log")

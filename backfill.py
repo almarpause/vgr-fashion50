@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Backfill a real multi-year weekly index time series into the workbook.
+"""Backfill a daily index time series (and per-segment sub-indices) into the workbook.
 
-Fetches ~5y of weekly closes + weekly FX (free sources), reconstructs the index
-(base = 1000 at the start), adds names on their first traded week via the divisor
-rule, and writes the full Weekly series + Summary chart + Divisor_Log / Unscheduled
-add-events + Methodology.  Rebuilds ``state.json`` so live weekly runs append
-onto this history.
+Fetches daily closes + FX from ``--history-start`` (default 2020-01-01) to today,
+reconstructs the index with the divisor rule (IPOs added mid-series), then rescales
+the whole series so it equals 1000 on the anchor/base date (``--base``, default
+2025-01-01).  Also builds a sub-index per segment (Luxury / Fashion / Sportswear /
+Apparel / Footwear), each rebased to 1000 on the same anchor.
 
 Usage:
-    python backfill.py [--years 5] [--base YYYY-MM-DD] [--fresh]
+    python backfill.py [--history-start 2020-01-01] [--base 2025-01-01] [--fresh]
 
-Note: historical share counts are not available for free, so the *current*
-shares/float are held constant across history — the series is price-and-FX
-driven.  This is a documented approximation (see the Methodology sheet).
+Note: historical share counts are not free, so the *current* shares/float are held
+constant across history — the series is price-and-FX driven (see Methodology).
 """
 from __future__ import annotations
 
@@ -24,10 +23,10 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from engine import config, indexmath  # noqa: E402
-from engine.config import load_constituents  # noqa: E402
+from engine.config import load_constituents, primary_segment  # noqa: E402
 from engine.datafetch import DataProvider  # noqa: E402
 from engine.history import (  # noqa: E402
-    HistoryPanel, build_index_series, fetch_weekly_history,
+    build_index_series, fetch_weekly_history, filter_panel,
 )
 from engine.state import EngineState, save_state  # noqa: E402
 from engine.workbook import WorkbookManager  # noqa: E402
@@ -44,26 +43,23 @@ class _Memo(DataProvider):
         return self._c[ticker]
 
 
-def _trim(panel: HistoryPanel, base: date) -> HistoryPanel:
-    weeks = [w for w in panel.weeks if w >= base]
-    price = {t: {w: v for w, v in s.items() if w >= base}
-             for t, s in panel.price.items()}
-    fx = {c: {w: v for w, v in s.items() if w >= base}
-          for c, s in panel.fx.items()}
-    return HistoryPanel(weeks=weeks, price=price, fx=fx,
-                        currency=panel.currency, shares=panel.shares,
-                        float_factor=panel.float_factor, name=panel.name,
-                        segment=panel.segment,
-                        missing_snapshot=panel.missing_snapshot)
+def _anchor_level(series, base_iso):
+    """Level on the first series date >= base_iso (the =1000 anchor point)."""
+    for d, lv in series:
+        if d >= base_iso and lv:
+            return lv
+    return series[-1][1] if series else None
 
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--years", type=int, default=5)
-    ap.add_argument("--base", type=str, default=None,
-                    help="base date YYYY-MM-DD (overrides implied start)")
+    ap.add_argument("--history-start", type=str, default="2020-01-01",
+                    help="fetch daily data from this date (or 'whenever available')")
+    ap.add_argument("--base", type=str, default="2025-01-01",
+                    help="anchor date where the index == 1000")
     ap.add_argument("--fresh", action="store_true")
     args = ap.parse_args(argv[1:])
+    base_iso = args.base
 
     if args.fresh:
         for p in (config.WORKBOOK_PATH, config.STATE_PATH):
@@ -72,32 +68,68 @@ def main(argv: list[str]) -> int:
 
     settings = config.DEFAULT_SETTINGS
     constituents = load_constituents()
-    period = f"{max(args.years, 1)}y"
 
-    print(f"Fetching {period} of weekly history for {len(constituents)} names "
-          f"(bulk prices + FX) ...")
-    panel = fetch_weekly_history(constituents, period=period,
-                                 data_provider=_Memo())
-    if args.base:
-        panel = _trim(panel, date.fromisoformat(args.base))
+    print(f"Fetching daily history from {args.history_start} for "
+          f"{len(constituents)} names (bulk prices + FX) ...")
+    panel = fetch_weekly_history(constituents, data_provider=_Memo(),
+                                 interval="1d", start=args.history_start)
     if not panel.weeks:
         print("No history returned — aborting.")
         return 1
     if panel.missing_snapshot:
-        print(f"  {len(panel.missing_snapshot)} names lacked a shares/currency "
-              f"snapshot and are excluded: {panel.missing_snapshot}")
+        print(f"  {len(panel.missing_snapshot)} names excluded (no snapshot): "
+              f"{panel.missing_snapshot}")
 
     print("Building index series ...")
     res = build_index_series(panel, settings)
-    print(f"  {len(res.rows)} daily points, base {res.base_date} = 1000.00, "
-          f"latest {res.final_week} = {res.final_level:.2f}, "
-          f"{len(res.events)} index-add events")
+
+    # ---- Rescale the whole series so it equals 1000 on the anchor date. ----- #
+    main_series = [(r["run_date"], r["index_level"]) for r in res.rows]
+    anchor_raw = _anchor_level(main_series, base_iso)
+    if not anchor_raw:
+        print(f"No data at/after anchor {base_iso} — aborting.")
+        return 1
+    k = 1000.0 / anchor_raw
+    for r in res.rows:
+        r["index_level"] = round(r["index_level"] * k, 6)
+        if r.get("divisor_used"):
+            r["divisor_used"] = r["divisor_used"] / k
+    final_level = res.rows[-1]["index_level"]
+    since = (final_level / 1000.0 - 1.0) * 100.0
+    print(f"  {len(res.rows)} daily points {res.base_date}..{res.final_week}; "
+          f"anchored 1000 on {base_iso}; latest = {final_level:.2f} "
+          f"({since:+.1f}% since {base_iso}); {len(res.events)} IPO adds")
 
     wbm = WorkbookManager()
-    # Weekly time series
     wbm.replace_sheet_rows("Weekly", res.rows)
 
-    # Divisor changes + Unscheduled add-events
+    # ---- Segment sub-indices (each rebased to 1000 on the anchor). ---------- #
+    seg_groups: dict[str, list[str]] = {}
+    for t in res.active:
+        seg = primary_segment(panel.segment.get(t, "?"))
+        seg_groups.setdefault(seg, []).append(t)
+    weights_now = indexmath.compute_weights(res.final_caps_usd,
+                                            cap=settings.effective_cap)
+    seg_weight = {s: sum(weights_now.get(t, 0) for t in tks)
+                  for s, tks in seg_groups.items()}
+    segments_sorted = sorted(seg_groups, key=lambda s: -seg_weight.get(s, 0))
+    sub_dates = [r["run_date"] for r in res.rows if r["run_date"] >= base_iso]
+    sub_levels: dict[str, dict[str, float]] = {}
+    for seg in segments_sorted:
+        sp = filter_panel(panel, seg_groups[seg])
+        try:
+            sres = build_index_series(sp, settings)
+        except Exception:
+            continue
+        ss = [(r["run_date"], r["index_level"]) for r in sres.rows]
+        a = _anchor_level(ss, base_iso)
+        if not a:
+            continue
+        ks = 1000.0 / a
+        sub_levels[seg] = {d: round(lv * ks, 4) for d, lv in ss if d >= base_iso}
+    wbm.write_subindices(sub_dates, segments_sorted, sub_levels)
+
+    # ---- Divisor log / Unscheduled add-events ------------------------------ #
     wbm.replace_sheet_rows("Divisor_Log", [{
         "timestamp": e.effective_date.isoformat(),
         "reason": "backfill:index-add", "old_divisor": e.old_divisor,
@@ -116,7 +148,6 @@ def main(argv: list[str]) -> int:
         "status": "APPLIED",
     } for e in res.events])
 
-    # FX (final week snapshot) + Constituents + Audit (final week)
     wbm.replace_sheet_rows("FX", [{
         "run_date": res.final_week.isoformat(), "currency": ccy,
         "rate_to_usd": rate, "source": "backfill", "status": "OK",
@@ -132,11 +163,10 @@ def main(argv: list[str]) -> int:
             "detail": "MISSING (not invented): " + ", ".join(panel.missing_snapshot),
         })
 
+    # ---- Audit (latest) ---------------------------------------------------- #
     last_w = res.final_week
     audit_rows = []
     for t in res.active:
-        # Actual price used = most recent available on/before the final week
-        # (carried forward when this week's bar hasn't printed yet).
         series = panel.price.get(t, {})
         avail = [d for d in series if d <= last_w]
         asof = max(avail) if avail else None
@@ -157,76 +187,65 @@ def main(argv: list[str]) -> int:
         })
     wbm.replace_sheet_rows("Audit", audit_rows)
 
-    # Per-company weekly price panel (drives the dashboard selector + YTD/MoM).
-    series_weeks = [date.fromisoformat(r["run_date"]) for r in res.rows]
-    wbm.write_prices(series_weeks, res.active, panel.price)
+    # ---- Per-company price panel (selector) — sliced to the anchor onward. -- #
+    base_d = date.fromisoformat(base_iso)
+    price_slice = {t: {d: v for d, v in panel.price[t].items() if d >= base_d}
+                   for t in res.active if t in panel.price}
+    sel_dates = [date.fromisoformat(r["run_date"]) for r in res.rows
+                 if r["run_date"] >= base_iso]
+    wbm.write_prices(sel_dates, res.active, price_slice)
 
-    # Summary KPIs + weights + sectors + chart
+    # ---- Summary + Methodology --------------------------------------------- #
     caps = res.final_caps_usd
-    weights = indexmath.compute_weights(caps, cap=settings.effective_cap)
-    ranked = sorted(weights, key=weights.get, reverse=True)
-    top10 = [(t, panel.name.get(t, t), weights[t]) for t in ranked[:10]]
-    seg_w: dict[str, float] = {}
-    for t, w in weights.items():
-        seg = panel.segment.get(t, "?")
-        seg_w[seg] = seg_w.get(seg, 0.0) + w
-    sectors = sorted(seg_w.items(), key=lambda kv: -kv[1])
-
-    def _ret(weeks_back: int) -> float | None:
-        if len(res.rows) <= weeks_back:
-            return None
-        past = res.rows[-1 - weeks_back]["index_level"]
-        return (res.final_level / past - 1.0) * 100.0 if past else None
-
-    since = (res.final_level / 1000.0 - 1.0) * 100.0
+    ranked = sorted(weights_now, key=weights_now.get, reverse=True)
+    top10 = [(t, panel.name.get(t, t), weights_now[t]) for t in ranked[:10]]
+    sectors = sorted(seg_weight.items(), key=lambda kv: -kv[1])
     kpis = [
-        ("Base date", res.base_date.isoformat()),
+        ("Anchor (base) date", base_iso),
         ("Base level", 1000.0),
+        ("History start", res.base_date.isoformat()),
         ("Latest date", res.final_week.isoformat()),
-        ("Latest level", round(res.final_level, 2)),
-        ("Since-inception return %", round(since, 2)),
-        ("1-year return % (52w)", round(_ret(52), 2) if _ret(52) is not None else "n/a"),
-        ("Weeks of history", len(res.rows)),
+        ("Latest level", round(final_level, 2)),
+        (f"Since {base_iso} %", round(since, 2)),
+        ("Daily points", len(res.rows)),
         ("Constituents in index", len(res.active)),
+        ("Segments", len(sub_levels)),
         ("Names excluded (no snapshot)", len(panel.missing_snapshot)),
-        ("Index-add events", len(res.events)),
-        ("Current divisor", round(res.final_divisor, 4)),
-        ("Weight cap", f"{int(settings.effective_cap*100)}%"
-         if settings.effective_cap else "off"),
+        ("IPO add events", len(res.events)),
+        ("Weight cap", "off" if not settings.effective_cap
+         else f"{int(settings.effective_cap*100)}%"),
     ]
     wbm.write_summary(kpis, top10, sectors)
     wbm.add_index_chart()
-
     wbm.write_methodology([
         ("Construction", "Market-cap weighted, divisor-based, float-adjusted "
          "(S&P-500 style). All calculations in USD."),
-        ("Base", f"Index = 1000.00 on {res.base_date.isoformat()}; "
-         f"Divisor_base = Sum(cap_usd at base) / 1000."),
+        ("Base / anchor", f"The whole series is rescaled so the index == 1000.00 "
+         f"on {base_iso}. History runs from {res.base_date.isoformat()}."),
+        ("Sub-indices", "Per-segment (Luxury / Fashion / Sportswear / Apparel / "
+         "Footwear) mini-indices, each rebased to 1000 on the same anchor date."),
         ("Divisor rule", "On any add/drop/share change: Divisor_new = "
-         "Divisor_old * (Sum caps AFTER / Sum caps BEFORE) so the level is "
-         "continuous."),
+         "Divisor_old * (Sum caps AFTER / Sum caps BEFORE), so the level is "
+         "continuous. Rescaling by a constant preserves that continuity."),
         ("Prices", "yfinance daily Close (split-adjusted), normalised out of "
          "minor units (GBp/ZAc -> major /100) before FX."),
-        ("FX", "frankfurter.app (ECB) weekly USD-per-unit; yfinance FX pairs "
+        ("FX", "frankfurter.app (ECB) daily USD-per-unit; yfinance FX pairs "
          "fallback. Stored on the FX sheet."),
         ("Shares / float — APPROXIMATION", "Historical share counts are not "
-         "available for free, so the CURRENT sharesOutstanding and floatShares "
-         "are held constant across the backfill. The reconstruction is "
-         "therefore price-and-FX driven; historical share/float changes are not "
-         "modelled. Live Quarterly refreshes update the basis going forward."),
-        ("Mid-series adds", "Names that IPO'd after the base date are added on "
-         "their first traded week via the divisor rule (see Divisor_Log / "
-         "Unscheduled), keeping the level continuous."),
-        ("Weight cap", f"Single-name cap {int(settings.effective_cap*100)}% "
-         "with iterative redistribution (reporting weights; preserves total)."
-         if settings.effective_cap else "Weight cap disabled."),
+         "available for free, so CURRENT sharesOutstanding and floatShares are "
+         "held constant across history; the series is price-and-FX driven."),
+        ("Mid-series adds", "Names that IPO'd after the history start are added "
+         "on their first traded day via the divisor rule (see Divisor_Log)."),
+        ("Weight cap", "Disabled — weights are pure float-adjusted market-cap "
+         "shares." if not settings.effective_cap else
+         f"Single-name cap {int(settings.effective_cap*100)}%."),
     ])
 
-    # Rebuild state so live weekly runs continue the series.
+    # ---- State (rescaled basis so live weekly runs continue the series). ---- #
     st = EngineState()
-    st.base_date = res.base_date.isoformat()
-    st.base_divisor = res.base_divisor
-    st.current_divisor = res.final_divisor
+    st.base_date = base_iso
+    st.base_divisor = res.base_divisor / k
+    st.current_divisor = res.final_divisor / k
     st.base_index_level = 1000.0
     st.base_total_cap_usd = res.base_total_cap_usd
     st.constituents = res.active
@@ -235,16 +254,14 @@ def main(argv: list[str]) -> int:
     st.last_float_factor = {t: panel.float_factor[t] for t in res.active
                             if t in panel.float_factor}
     st.last_fx = res.final_fx
-    st.last_index_level = res.final_level
+    st.last_index_level = final_level
     st.last_run_date = res.final_week.isoformat()
 
     wbm.save()
     save_state(st)
 
     print(f"\nWrote {config.WORKBOOK_PATH}")
-    print(f"  Summary: base {res.base_date} = 1000  ->  "
-          f"{res.final_week} = {res.final_level:.2f}  "
-          f"({since:+.1f}% since inception)")
+    print(f"  Segments: {', '.join(f'{s} ({int(seg_weight[s]*100)}%)' for s in segments_sorted)}")
     print("  Run  python dashboard.py  to generate the HTML dashboard.")
     return 0
 

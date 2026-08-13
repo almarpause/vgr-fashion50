@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Render a self-contained HTML dashboard + JSON feed from the workbook.
 
-Top of the page: the index % growth over Yesterday / L7D / L30D / MTD / YTD
-(colour-coded). Below: the index chart, the full constituents table (segment,
-price, yesterday & L7D price change, YTD, full market cap, float, index weight),
-and an interactive per-company evolution selector rebased to 1000. Everything is
-inline (no CDN); ``fashion50_data.json`` carries the same data for the website.
+Layout: top index-growth metrics (Yesterday / L7D / L30D / MTD / YTD, colour-
+coded); the index chart with a time-horizon selector (Since 2025 / 2023 / 2020)
+and a vertical baseline line at 2025-01-01; a per-segment sub-index table; the
+full constituents table (segment, price, yesterday & L7D change, YTD, cap, float,
+weight, with IR links); and a per-company evolution selector. Everything inline
+(no CDN); ``fashion50_data.json`` carries the same data for the website.
 
 Usage:
     python dashboard.py [--open]
@@ -23,10 +24,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from openpyxl import load_workbook  # noqa: E402
 
 from engine import config, indexmath  # noqa: E402
-from engine.config import DEFAULT_SETTINGS, load_constituents  # noqa: E402
+from engine.config import DEFAULT_SETTINGS, load_constituents, primary_segment  # noqa: E402
 
 DASHBOARD_PATH = os.path.join(config.PROJECT_DIR, "Fashion50_Dashboard.html")
 DATA_JSON_PATH = os.path.join(config.PROJECT_DIR, "fashion50_data.json")
+BASE_DATE = "2025-01-01"
 
 
 def _read_workbook():
@@ -43,23 +45,29 @@ def _read_workbook():
                         for i, h in enumerate(headers)})
         return out
 
-    prices = {}
-    if "Prices" in wb.sheetnames:
-        ws = wb["Prices"]
-        hdr = [c.value for c in ws[1]]
-        tickers = hdr[1:]
-        for t in tickers:
-            prices[t] = []
-        for r in ws.iter_rows(min_row=2, values_only=True):
-            d = r[0]
-            if d is None:
-                continue
-            for j, t in enumerate(tickers, start=1):
-                v = r[j] if j < len(r) else None
-                if v is not None:
-                    prices[t].append((str(d), float(v)))
+    def wide(sheet):
+        """Wide sheet -> (col_order, {col: [(date, value)]})."""
+        order, data = [], {}
+        if sheet in wb.sheetnames:
+            ws = wb[sheet]
+            hdr = [c.value for c in ws[1]]
+            order = hdr[1:]
+            for c in order:
+                data[c] = []
+            for r in ws.iter_rows(min_row=2, values_only=True):
+                d = r[0]
+                if d is None:
+                    continue
+                for j, c in enumerate(order, start=1):
+                    v = r[j] if j < len(r) else None
+                    if v is not None:
+                        data[c].append((str(d), float(v)))
+        return order, data
+
+    _, prices = wide("Prices")
+    seg_order, subidx = wide("SubIndices")
     return (rows("Weekly"), rows("Audit"), rows("Constituents"),
-            rows("Unscheduled"), prices)
+            rows("Unscheduled"), prices, seg_order, subidx)
 
 
 def _fmt(x, nd=2):
@@ -81,23 +89,8 @@ def _sign(v):
     return "up" if v >= 0 else "down"
 
 
-def _simplify_segment(seg):
-    """Collapse to the primary bucket — all Luxury sub-segments (jewellery /
-    watches / eyewear) become 'Luxury', and likewise Sportswear/Footwear ->
-    Sportswear, Fashion-Ecommerce -> Fashion, etc. (text before the first - or /)."""
-    import re
-    s = (seg or "").strip()
-    if not s:
-        return s
-    return re.split(r"[-/]", s)[0].strip() or s
-
-
 def _changes(series) -> dict:
-    """Percentage changes from a [(date_iso, value)] series (sorted ascending).
-
-    Returns latest + Yesterday / L7D / L30D / MTD / YTD, anchored on the latest
-    date in the series (not today), so it's correct even if the data lags a day.
-    """
+    """latest + Yesterday / L7D / L30D / MTD / YTD from [(date_iso, value)]."""
     s = [(d, v) for d, v in series if v is not None]
     out = {"latest": None, "yesterday": None, "l7d": None, "l30d": None,
            "mtd": None, "ytd": None}
@@ -141,55 +134,28 @@ def _changes(series) -> dict:
     return out
 
 
-def _line_chart(series, width=1040, height=320, pad=48):
-    if len(series) < 2:
-        return "<p>Not enough data to chart.</p>"
-    levels = [lv for _, lv in series]
-    lo, hi = min(levels), max(levels)
-    span = (hi - lo) or 1.0
-    pw, ph = width - 2 * pad, height - 2 * pad
-    n = len(series)
-
-    def x(i): return pad + pw * i / (n - 1)
-    def y(v): return pad + ph * (1 - (v - lo) / span)
-
-    pts = " ".join(f"{x(i):.1f},{y(v):.1f}" for i, (_, v) in enumerate(series))
-    area = f"{pad:.1f},{pad+ph:.1f} " + pts + f" {pad+pw:.1f},{pad+ph:.1f}"
-    base_line = ""
-    if lo <= 1000 <= hi:
-        yb = y(1000)
-        base_line = (f'<line x1="{pad}" y1="{yb:.1f}" x2="{pad+pw}" y2="{yb:.1f}" '
-                     f'class="baseline"/><text x="{pad+4}" y="{yb-5:.1f}" '
-                     f'class="axis">1000 (base)</text>')
-    grid = []
-    for f in (0, 0.25, 0.5, 0.75, 1.0):
-        val = lo + span * f
-        yy = y(val)
-        grid.append(f'<line x1="{pad}" y1="{yy:.1f}" x2="{pad+pw}" y2="{yy:.1f}" '
-                    f'class="grid"/><text x="{pad-8}" y="{yy+4:.1f}" '
-                    f'text-anchor="end" class="axis">{val:,.0f}</text>')
-    xlab = []
-    for f in (0, 0.25, 0.5, 0.75, 1.0):
-        i = int(round((n - 1) * f))
-        xlab.append(f'<text x="{x(i):.1f}" y="{pad+ph+22:.1f}" '
-                    f'text-anchor="middle" class="axis">{series[i][0]}</text>')
-    lx, ly = x(n - 1), y(series[-1][1])
-    return f"""<svg viewBox="0 0 {width} {height}" class="chart">
-  <defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.28"/>
-    <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
-  </linearGradient></defs>
-  {''.join(grid)}{base_line}
-  <polygon points="{area}" fill="url(#fill)"/>
-  <polyline points="{pts}" fill="none" stroke="var(--accent)" stroke-width="2"/>
-  <circle cx="{lx:.1f}" cy="{ly:.1f}" r="4" fill="var(--accent)"/>
-  {''.join(xlab)}
-</svg>"""
-
-
 def _metric_tile(label, pct):
     return (f'<div class="kpi"><div class="k-label">{label}</div>'
             f'<div class="k-val {_sign(pct)}">{_pct(pct)}</div></div>')
+
+
+def _segment_table(seg_order, subidx):
+    body = []
+    for seg in seg_order:
+        m = _changes(subidx.get(seg, []))
+        body.append(
+            f"<tr><td><b>{html.escape(str(seg))}</b></td>"
+            f"<td class='num'>{_fmt(m['latest'])}</td>"
+            f"<td class='num {_sign(m['yesterday'])}'>{_pct(m['yesterday'])}</td>"
+            f"<td class='num {_sign(m['l7d'])}'>{_pct(m['l7d'])}</td>"
+            f"<td class='num {_sign(m['l30d'])}'>{_pct(m['l30d'])}</td>"
+            f"<td class='num {_sign(m['mtd'])}'>{_pct(m['mtd'])}</td>"
+            f"<td class='num {_sign(m['ytd'])}'>{_pct(m['ytd'])}</td></tr>")
+    return (
+        "<table class='wt'><thead><tr><th>Segment sub-index</th>"
+        "<th class='num'>Level</th><th class='num'>Yday</th><th class='num'>L7D</th>"
+        "<th class='num'>L30D</th><th class='num'>MTD</th><th class='num'>YTD</th>"
+        "</tr></thead><tbody>" + "".join(body) + "</tbody></table>")
 
 
 def _constituents_table(recs):
@@ -220,7 +186,6 @@ def _constituents_table(recs):
 
 
 def _prepare(weekly, audit, consts, prices):
-    """Shared computation for both the HTML and the JSON feed."""
     settings = DEFAULT_SETTINGS
     series = [(str(r["run_date"]), round(float(r["index_level"]), 4))
               for r in weekly if r.get("index_level") is not None]
@@ -241,7 +206,7 @@ def _prepare(weekly, audit, consts, prices):
         ff = ff_of.get(t, 1.0) or 1.0
         recs.append({
             "rank": i, "ticker": t, "name": name_of.get(t, t),
-            "ir": ir_of.get(t, ""), "segment": _simplify_segment(seg_of.get(t)),
+            "ir": ir_of.get(t, ""), "segment": primary_segment(seg_of.get(t)),
             "price": ch["latest"], "ccy": ccy_of.get(t, ""),
             "yday": ch["yesterday"], "l7d": ch["l7d"], "ytd": ch["ytd"],
             "fullcap": caps[t] / ff / 1e9, "float": ff * 100,
@@ -252,7 +217,7 @@ def _prepare(weekly, audit, consts, prices):
 
 
 def build_html() -> str:
-    weekly, audit, consts, unsched, prices = _read_workbook()
+    weekly, audit, consts, unsched, prices, seg_order, subidx = _read_workbook()
     series, recs, m, name_of, ranked = _prepare(weekly, audit, consts, prices)
     latest = m["latest"] or 0.0
 
@@ -260,6 +225,7 @@ def build_html() -> str:
                   if prices.get(t)}
     sel_names = {t: name_of.get(t, t) for t in sel_prices}
     idx_series = [[d, lv] for d, lv in series]
+    start_year = int(series[0][0][:4]) if series else 2020
     sel_order = sorted((t for t in ranked if t in sel_prices),
                        key=lambda t: (name_of.get(t, t) or "").lower())
     default_t = next((t for t in ranked if t in sel_prices), None)
@@ -267,11 +233,19 @@ def build_html() -> str:
         f'<option value="{t}"{" selected" if t == default_t else ""}>'
         f'{html.escape(str(name_of.get(t, t)))}</option>' for t in sel_order)
 
+    horizons = [("Since 2025", "2025-01-01")]
+    if start_year <= 2023:
+        horizons.append(("Since 2023", "2023-01-01"))
+    horizons.append((f"Since {start_year}", series[0][0] if series else "2020-01-01"))
+    hbtns = "".join(
+        f'<button class="hbtn{" active" if i == 0 else ""}" '
+        f'data-start="{s}">{lab}</button>'
+        for i, (lab, s) in enumerate(horizons))
+
     kpis = (
         f'<div class="kpi hero"><div class="k-label">Index level</div>'
         f'<div class="k-val">{_fmt(latest)}</div>'
-        f'<div class="k-sub">base {series[0][0] if series else "—"} = 1000 · '
-        f'as of {series[-1][0] if series else "—"}</div></div>'
+        f'<div class="k-sub">1000 on {BASE_DATE} · as of {series[-1][0] if series else "—"}</div></div>'
         + _metric_tile("Yesterday", m["yesterday"])
         + _metric_tile("L7D", m["l7d"])
         + _metric_tile("L30D", m["l30d"])
@@ -296,7 +270,6 @@ header h1 {{ margin:0 0 2px; font-size:24px; letter-spacing:-.02em; }}
 header .sub {{ color:var(--muted); font-size:13px; }}
 .kpis {{ display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin:22px 0; }}
 .kpi {{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }}
-.kpi.hero {{ grid-column:span 1; }}
 .k-label {{ color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }}
 .k-val {{ font-size:24px; font-weight:650; margin-top:4px; letter-spacing:-.02em; }}
 .k-sub {{ font-size:11px; color:var(--muted); margin-top:2px; }}
@@ -306,7 +279,12 @@ header .sub {{ color:var(--muted); font-size:13px; }}
 .chart {{ width:100%; height:auto; }}
 .grid {{ stroke:var(--line); stroke-width:1; }}
 .baseline {{ stroke:var(--muted); stroke-width:1; stroke-dasharray:4 4; opacity:.7; }}
+.vline {{ stroke:var(--accent); stroke-width:1.2; stroke-dasharray:3 3; opacity:.8; }}
 .axis {{ fill:var(--muted); font-size:11px; }}
+.hrow {{ display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }}
+.hbtn {{ background:var(--card); color:var(--muted); border:1px solid var(--line);
+  border-radius:8px; padding:5px 12px; font-size:13px; cursor:pointer; }}
+.hbtn.active {{ background:var(--accent); color:#fff; border-color:var(--accent); }}
 table.wt {{ width:100%; border-collapse:collapse; font-size:13px; }}
 table.wt th {{ text-align:left; color:var(--muted); font-weight:600; font-size:11px;
   text-transform:uppercase; letter-spacing:.03em; padding:6px 8px; border-bottom:1px solid var(--line); }}
@@ -327,18 +305,22 @@ footer {{ color:var(--muted); font-size:12px; margin-top:22px; }}
 <body><div class="wrap">
 <header>
   <h1>VGR 50 — Largest Lifestyle Companies</h1>
-  <div class="sub">Market-cap weighted · float-adjusted · USD — daily, base {series[0][0] if series else ''} = 1000</div>
+  <div class="sub">Market-cap weighted · float-adjusted · USD — daily, 1000 on {BASE_DATE}</div>
 </header>
-{'<div class="kpis">' + kpis + '</div>'}
-<div class="card"><h2>Index level (base 1000)</h2>{_line_chart(series)}</div>
+<div class="kpis">{kpis}</div>
+<div class="card"><h2>Index level (1000 on {BASE_DATE})</h2>
+  <div class="hrow">{hbtns}</div>
+  <div id="idxchart"></div>
+</div>
+<div class="card"><h2>Segment sub-indices (1000 on {BASE_DATE})</h2>
+{_segment_table(seg_order, subidx)}</div>
 <div class="card"><h2>All {len(recs)} constituents</h2>
 {_constituents_table(recs)}
 <div class="legend"><b>Index wt</b> is the float-adjusted market-cap share.
-<b>Mkt cap</b> is full size (shares × price); <b>Float</b> the tradable share —
-e.g. Zara's larger cap but low float is why Uniqlo's index weight is higher.
+<b>Mkt cap</b> is full size (shares × price); <b>Float</b> the tradable share.
 Price · Yday · L7D · YTD are the local share price.</div>
 </div>
-<div class="card"><h2>Company evolution — rebased to 1000 at the base date</h2>
+<div class="card"><h2>Company evolution — rebased to 1000 at {BASE_DATE}</h2>
   <select id="co">{options}</select>
   <div id="cochart"></div>
   <div class="cocap" id="cocap"></div>
@@ -348,61 +330,123 @@ Price · Yday · L7D · YTD are the local share price.</div>
 
     script = """
 <script>
-const IDX = __IDX__;
+const IDXFULL = __IDXFULL__;
+const BASE = __BASE__;
 const PRICES = __PRICES__;
 const NAMES = __NAMES__;
-function draw(t){
-  const raw = (PRICES[t]||[]).filter(r=>r[1]!=null);
-  if(!raw.length){return;}
-  const base = raw[0][1];
-  const comp = raw.map(r=>[r[0], r[1]/base*1000]);
-  const W=1040,H=320,pad=48;
-  const vals = comp.map(r=>r[1]).concat(IDX.map(r=>r[1]));
+const W=1040,H=320,pad=48;
+
+function axisPoly(a, lo, span){
+  return a.map((r,i)=>((pad+(W-2*pad)*i/(a.length-1)).toFixed(1))+","+
+    (pad+(H-2*pad)*(1-(r[1]-lo)/span)).toFixed(1)).join(" ");
+}
+function drawIndex(startISO){
+  const data = IDXFULL.filter(r=>r[0]>=startISO);
+  if(data.length<2) return;
+  const vals=data.map(r=>r[1]);
   let lo=Math.min.apply(null,vals), hi=Math.max.apply(null,vals);
   const span=(hi-lo)||1;
   const Y=v=>pad+(H-2*pad)*(1-(v-lo)/span);
+  const pts=axisPoly(data,lo,span);
+  const area=pad.toFixed(1)+","+(H-pad).toFixed(1)+" "+pts+" "+(W-pad).toFixed(1)+","+(H-pad).toFixed(1);
+  let grid="";
+  for(const f of [0,.25,.5,.75,1]){const val=lo+span*f,yy=Y(val);
+    grid+='<line x1="'+pad+'" y1="'+yy.toFixed(1)+'" x2="'+(W-pad)+'" y2="'+yy.toFixed(1)+'" class="grid"/>'+
+    '<text x="'+(pad-8)+'" y="'+(yy+4).toFixed(1)+'" text-anchor="end" class="axis">'+val.toFixed(0)+'</text>';}
+  let base1000="";
+  if(lo<=1000&&1000<=hi){const yb=Y(1000);
+    base1000='<line x1="'+pad+'" y1="'+yb.toFixed(1)+'" x2="'+(W-pad)+'" y2="'+yb.toFixed(1)+'" class="baseline"/>'+
+    '<text x="'+(pad+4)+'" y="'+(yb-5).toFixed(1)+'" class="axis">1000</text>';}
+  // vertical baseline line at BASE date (if within view)
+  let vline="";
+  let bi=data.findIndex(r=>r[0]>=BASE);
+  if(bi>0){const xb=pad+(W-2*pad)*bi/(data.length-1);
+    vline='<line x1="'+xb.toFixed(1)+'" y1="'+pad+'" x2="'+xb.toFixed(1)+'" y2="'+(H-pad)+'" class="vline"/>'+
+    '<text x="'+(xb+4).toFixed(1)+'" y="'+(pad+12)+'" class="axis" fill="var(--accent)">'+BASE+' = 1000</text>';}
+  let xlab="";
+  for(const f of [0,.25,.5,.75,1]){const i=Math.round((data.length-1)*f);
+    const x=pad+(W-2*pad)*i/(data.length-1);
+    xlab+='<text x="'+x.toFixed(1)+'" y="'+(H-pad+22)+'" text-anchor="middle" class="axis">'+data[i][0]+'</text>';}
+  const lx=pad+(W-2*pad), ly=Y(data[data.length-1][1]);
+  document.getElementById("idxchart").innerHTML=
+    '<svg viewBox="0 0 '+W+' '+H+'" class="chart">'+grid+base1000+vline+
+    '<polygon points="'+area+'" fill="var(--accent)" fill-opacity="0.12"/>'+
+    '<polyline points="'+pts+'" fill="none" stroke="var(--accent)" stroke-width="2"/>'+
+    '<circle cx="'+lx.toFixed(1)+'" cy="'+ly.toFixed(1)+'" r="4" fill="var(--accent)"/>'+
+    xlab+'</svg>';
+}
+document.querySelectorAll(".hbtn").forEach(b=>b.addEventListener("click",e=>{
+  document.querySelectorAll(".hbtn").forEach(x=>x.classList.remove("active"));
+  e.target.classList.add("active");
+  drawIndex(e.target.dataset.start);
+}));
+drawIndex("__BASE__");
+
+function drawCo(t){
+  const raw=(PRICES[t]||[]).filter(r=>r[1]!=null);
+  if(!raw.length) return;
+  const base=raw[0][1];
+  const comp=raw.map(r=>[r[0], r[1]/base*1000]);
+  const vals=comp.map(r=>r[1]).concat(IDXFULL.filter(r=>r[0]>=BASE).map(r=>r[1]));
+  let lo=Math.min.apply(null,vals), hi=Math.max.apply(null,vals);
+  const span=(hi-lo)||1;
+  const Y=v=>pad+(H-2*pad)*(1-(v-lo)/span);
+  const idx=IDXFULL.filter(r=>r[0]>=BASE);
   const poly=a=>a.map((r,i)=>((pad+(W-2*pad)*i/(a.length-1)).toFixed(1))+","+Y(r[1]).toFixed(1)).join(" ");
   let grid="";
   for(const f of [0,.25,.5,.75,1]){const val=lo+span*f,yy=Y(val);
     grid+='<line x1="'+pad+'" y1="'+yy.toFixed(1)+'" x2="'+(W-pad)+'" y2="'+yy.toFixed(1)+'" class="grid"/>'+
     '<text x="'+(pad-8)+'" y="'+(yy+4).toFixed(1)+'" text-anchor="end" class="axis">'+val.toFixed(0)+'</text>';}
-  let xlab="";
-  for(const f of [0,.25,.5,.75,1]){const i=Math.round((IDX.length-1)*f);
-    const x=pad+(W-2*pad)*i/(IDX.length-1);
-    xlab+='<text x="'+x.toFixed(1)+'" y="'+(H-pad+22)+'" text-anchor="middle" class="axis">'+IDX[i][0]+'</text>';}
-  let base1000="";
+  let b1="";
   if(lo<=1000&&1000<=hi){const yb=Y(1000);
-    base1000='<line x1="'+pad+'" y1="'+yb.toFixed(1)+'" x2="'+(W-pad)+'" y2="'+yb.toFixed(1)+'" class="baseline"/>';}
-  const svg='<svg viewBox="0 0 '+W+' '+H+'" class="chart">'+grid+base1000+
-    '<polyline points="'+poly(IDX)+'" fill="none" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="5 4"/>'+
-    '<polyline points="'+poly(comp)+'" fill="none" stroke="var(--accent)" stroke-width="2.3"/>'+
-    xlab+'</svg>';
-  document.getElementById("cochart").innerHTML=svg;
+    b1='<line x1="'+pad+'" y1="'+yb.toFixed(1)+'" x2="'+(W-pad)+'" y2="'+yb.toFixed(1)+'" class="baseline"/>';}
+  let xlab="";
+  for(const f of [0,.25,.5,.75,1]){const i=Math.round((idx.length-1)*f);
+    const x=pad+(W-2*pad)*i/(idx.length-1);
+    xlab+='<text x="'+x.toFixed(1)+'" y="'+(H-pad+22)+'" text-anchor="middle" class="axis">'+idx[i][0]+'</text>';}
+  document.getElementById("cochart").innerHTML=
+    '<svg viewBox="0 0 '+W+' '+H+'" class="chart">'+grid+b1+
+    '<polyline points="'+poly(idx)+'" fill="none" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="5 4"/>'+
+    '<polyline points="'+poly(comp)+'" fill="none" stroke="var(--accent)" stroke-width="2.3"/>'+xlab+'</svg>';
   const last=comp[comp.length-1][1], pct=(last/1000-1)*100;
   document.getElementById("cocap").innerHTML=
     "<b style='color:var(--accent)'>"+NAMES[t]+"</b>: rebased 1000 -> "+last.toFixed(1)+
     " ("+(pct>=0?"+":"")+pct.toFixed(1)+"% since base). Dashed grey = the index.";
 }
 const sel=document.getElementById("co");
-sel.addEventListener("change",e=>draw(e.target.value));
-draw(sel.value);
+sel.addEventListener("change",e=>drawCo(e.target.value));
+drawCo(sel.value);
 </script>
 </body></html>"""
     script = (script
-              .replace("__IDX__", json.dumps(idx_series))
+              .replace("__IDXFULL__", json.dumps(idx_series))
               .replace("__PRICES__", json.dumps(sel_prices))
-              .replace("__NAMES__", json.dumps(sel_names)))
+              .replace("__NAMES__", json.dumps(sel_names))
+              .replace("__BASE__", json.dumps(BASE_DATE)))
     return head + script
 
 
+def _r(x, nd=2):
+    return round(x, nd) if isinstance(x, (int, float)) else None
+
+
 def build_data() -> dict:
-    weekly, audit, consts, unsched, prices = _read_workbook()
+    weekly, audit, consts, unsched, prices, seg_order, subidx = _read_workbook()
     series, recs, m, name_of, ranked = _prepare(weekly, audit, consts, prices)
+    segments = []
+    for seg in seg_order:
+        sm = _changes(subidx.get(seg, []))
+        segments.append({
+            "segment": seg, "level": _r(sm["latest"]),
+            "chg_yesterday_pct": _r(sm["yesterday"]), "chg_l7d_pct": _r(sm["l7d"]),
+            "chg_l30d_pct": _r(sm["l30d"]), "mtd_pct": _r(sm["mtd"]),
+            "ytd_pct": _r(sm["ytd"]),
+        })
     return {
         "generated_at": datetime.datetime.now(datetime.timezone.utc)
         .isoformat(timespec="seconds"),
-        "base_date": series[0][0] if series else None,
-        "base_level": 1000.0,
+        "base_date": BASE_DATE, "base_level": 1000.0,
+        "history_start": series[0][0] if series else None,
         "latest_date": series[-1][0] if series else None,
         "latest_level": m["latest"],
         "index_change": {"yesterday": _r(m["yesterday"]), "l7d": _r(m["l7d"]),
@@ -410,6 +454,9 @@ def build_data() -> dict:
                          "ytd": _r(m["ytd"])},
         "n_constituents": len(recs),
         "index": [[d, lv] for d, lv in series],
+        "segments": segments,
+        "subindices": {seg: [[d, round(v, 3)] for d, v in subidx.get(seg, [])]
+                       for seg in seg_order},
         "constituents": [{
             "rank": r["rank"], "ticker": r["ticker"], "name": r["name"],
             "ir_url": r["ir"], "segment": r["segment"],
@@ -423,13 +470,9 @@ def build_data() -> dict:
     }
 
 
-def _r(x, nd=2):
-    return round(x, nd) if isinstance(x, (int, float)) else None
-
-
 def main(argv: list[str]) -> int:
     if not os.path.exists(config.WORKBOOK_PATH):
-        print("No workbook found — run backfill.py or run_weekly.py first.")
+        print("No workbook found — run backfill.py first.")
         return 1
     with open(DASHBOARD_PATH, "w", encoding="utf-8") as fh:
         fh.write(build_html())

@@ -63,6 +63,17 @@ FAMILY_CONTROLLED = {
 }
 
 
+def primary_segment(seg: str) -> str:
+    """Collapse a raw segment to its primary bucket — all Luxury sub-segments
+    (jewellery/watches/eyewear) -> 'Luxury', Sportswear/Footwear -> 'Sportswear',
+    Fashion-Ecommerce -> 'Fashion', etc. (text before the first '-' or '/')."""
+    import re
+    s = (seg or "").strip()
+    if not s:
+        return s
+    return re.split(r"[-/]", s)[0].strip() or s
+
+
 @dataclass(frozen=True)
 class Constituent:
     name: str

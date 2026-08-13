@@ -77,13 +77,17 @@ class HistoryPanel:
 # --------------------------------------------------------------------------- #
 # Network fetch
 # --------------------------------------------------------------------------- #
-def _download_prices(tickers: list[str], period: str, interval: str = "1d"):
+def _download_prices(tickers: list[str], period: str, interval: str = "1d",
+                     start: str | None = None):
     import warnings
     warnings.filterwarnings("ignore")
     import pandas as pd
     import yfinance as yf
-    df = yf.download(tickers, period=period, interval=interval,
-                     auto_adjust=False, progress=False, threads=True)
+    kw = dict(interval=interval, auto_adjust=False, progress=False, threads=True)
+    if start:
+        df = yf.download(tickers, start=start, **kw)
+    else:
+        df = yf.download(tickers, period=period, **kw)
     # Multi-ticker -> columns are a MultiIndex (field, ticker); single -> flat.
     if isinstance(df.columns, pd.MultiIndex):
         close = df["Close"]
@@ -163,17 +167,19 @@ def _sample_on_weeks(daily: dict[date, float], weeks: list[date]
 
 def fetch_weekly_history(constituents: list[Constituent], period: str = "5y",
                          data_provider: DataProvider | None = None,
-                         interval: str = "1d") -> HistoryPanel:
+                         interval: str = "1d",
+                         start: str | None = None) -> HistoryPanel:
     """Build a HistoryPanel from live sources (bulk prices + FX + snapshot).
 
-    ``interval`` is the yfinance bar size — "1d" (default) for a daily index
-    series, "1wk" for weekly.  The panel's ``weeks`` field then holds daily (or
+    ``interval`` is the yfinance bar size — "1d" (default) daily, "1wk" weekly.
+    ``start`` (YYYY-MM-DD) fetches from that date instead of a rolling ``period``
+    (used to reach back to 2020).  The panel's ``weeks`` field holds daily (or
     weekly) dates; everything downstream is granularity-agnostic.
     """
     data_provider = data_provider or DataProvider()
     tickers = [c.yahoo_ticker for c in constituents]
 
-    close = _download_prices(tickers, period, interval)
+    close = _download_prices(tickers, period, interval, start)
     weeks = [ts.date() if hasattr(ts, "date") else ts for ts in close.index]
 
     # Current snapshot: shares, float, raw currency (held constant across history)
@@ -247,6 +253,22 @@ def fetch_weekly_history(constituents: list[Constituent], period: str = "5y",
 # --------------------------------------------------------------------------- #
 # Pure index construction
 # --------------------------------------------------------------------------- #
+def filter_panel(panel: HistoryPanel, tickers) -> HistoryPanel:
+    """A HistoryPanel restricted to a subset of tickers (for a sub-index)."""
+    keep = {t for t in tickers if t in panel.shares}
+    return HistoryPanel(
+        weeks=panel.weeks,
+        price={t: panel.price[t] for t in keep if t in panel.price},
+        fx=panel.fx,
+        currency={t: panel.currency[t] for t in keep if t in panel.currency},
+        shares={t: panel.shares[t] for t in keep},
+        float_factor={t: panel.float_factor[t] for t in keep
+                      if t in panel.float_factor},
+        name={t: panel.name.get(t, t) for t in keep},
+        segment={t: panel.segment.get(t, "") for t in keep},
+    )
+
+
 @dataclass
 class DivisorEvent:
     effective_date: date

@@ -251,6 +251,22 @@ class WorkbookManager:
                       + [prices.get(t, {}).get(w) for t in tickers])
         ws.freeze_panes = "B2"
 
+    def write_subindices(self, dates, segments, levels) -> None:
+        """Wide segment sub-index panel: row = date, column = segment level.
+
+        ``dates`` list[str], ``segments`` list[str], ``levels`` dict
+        segment -> {date_iso: level} (each rebased to 1000 at the base date).
+        """
+        if "SubIndices" in self.wb.sheetnames:
+            self.wb.remove(self.wb["SubIndices"])
+        ws = self.wb.create_sheet("SubIndices")
+        ws.append(["date"] + list(segments))
+        for c in ws[1]:
+            c.font = Font(bold=True)
+        for d in dates:
+            ws.append([d] + [levels.get(s, {}).get(d) for s in segments])
+        ws.freeze_panes = "B2"
+
     def write_methodology(self, sections: list[tuple[str, str]]) -> None:
         self.replace_sheet_rows(
             "Methodology",

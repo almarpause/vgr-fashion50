@@ -37,7 +37,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Rebuild index from live data
-        run: python backfill.py --fresh --base 2025-01-01 --years 2
+        run: python backfill.py --fresh --history-start 2020-01-01 --base 2025-01-01
 
       - name: Refresh the early-warning watchlist
         run: python preflight.py || true   # non-fatal: never block publishing
