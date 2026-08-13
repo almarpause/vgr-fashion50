@@ -338,7 +338,7 @@ select {{ background:var(--card); color:var(--ink); border:1px solid var(--rule)
 <div class="topbar"></div>
 <div class="wrap">
 <header>
-  <div class="hd"><span class="figbox">Very Good Retail · Figure</span><span class="vgr">VGR</span></div>
+  <div class="hd"><span class="figbox">Very Good Retail · Indexes</span><span class="vgr">VGR</span></div>
   <h1>VGR 50 — Largest Lifestyle Companies</h1>
   <div class="lede">A market-cap-weighted, float-adjusted index of the 50 largest listed fashion, luxury and sportswear companies, priced daily in US dollars and anchored to 1,000 on {BASE_LABEL}.</div>
   <div class="meta">{html.escape(meta)}</div>
