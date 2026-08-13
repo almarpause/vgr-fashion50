@@ -414,7 +414,7 @@ document.querySelectorAll(".pill").forEach(b=>b.addEventListener("click",e=>{
   document.querySelectorAll(".pill").forEach(x=>x.classList.remove("on"));
   e.target.classList.add("on"); drawIndex(e.target.dataset.start);
 }));
-drawIndex("__BASE__");
+drawIndex(BASE);
 
 function drawCo(t){
   const raw=(PRICES[t]||[]).filter(r=>r[1]!=null);
