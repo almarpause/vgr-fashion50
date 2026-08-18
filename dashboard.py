@@ -162,7 +162,7 @@ def _segment_table(seg_order, subidx):
             f"<td class='num {_sign(m['mtd'])}'>{_pct(m['mtd'])}</td>"
             f"<td class='num {_sign(m['ytd'])}'>{_pct(m['ytd'])}</td></tr>")
     return (
-        "<table class='wt'><thead><tr><th>Segment</th>"
+        "<table class='wt'><thead><tr><th>Sub-sector</th>"
         "<th class='num'>Level</th><th class='num'>Yday</th><th class='num'>L7D</th>"
         "<th class='num'>L30D</th><th class='num'>MTD</th><th class='num'>YTD</th>"
         "</tr></thead><tbody>" + "".join(body) + "</tbody></table>")
@@ -238,6 +238,15 @@ def build_html() -> str:
             return "flat year to date"
         return (f"up {v:.1f}% year to date" if v >= 0
                 else f"down {abs(v):.1f}% year to date")
+    seg_ytd = {s: _changes(subidx.get(s, []))["ytd"] for s in seg_order}
+    best = max((s for s in seg_order if seg_ytd.get(s) is not None),
+               key=lambda s: seg_ytd[s], default=None)
+    worst = min((s for s in seg_order if seg_ytd.get(s) is not None),
+                key=lambda s: seg_ytd[s], default=None)
+    seg_dek = "Each sub-sector as its own float-adjusted index · 1,000 = " + BASE_LABEL
+    if best and worst and best != worst:
+        seg_dek = (f"{best} leads ({seg_ytd[best]:+.0f}% YTD), "
+                   f"{worst} lags ({seg_ytd[worst]:+.0f}% YTD) · 1,000 = " + BASE_LABEL)
     sel_prices = {t: [[d, p] for d, p in prices.get(t, [])] for t in ranked
                   if prices.get(t)}
     sel_names = {t: name_of.get(t, t) for t in sel_prices}
@@ -348,6 +357,10 @@ select {{ background:var(--card); color:var(--ink); border:1px solid var(--rule)
   {_cardhead("VGR 50 is " + finding(ytd), "Daily index level · USD · red line marks the " + BASE_LABEL + " base of 1,000")}
   <div class="pillrow">{hbtns}</div>
   <div id="idxchart"></div>
+</div>
+<div class="card">
+  {_cardhead("Sub-sectors", seg_dek)}
+{_segment_table(seg_order, subidx)}
 </div>
 <div class="card">
   {_cardhead("The 50 largest listed lifestyle companies", "Ranked by float-adjusted market cap · local share price · negatives in red · names link to investor relations")}
