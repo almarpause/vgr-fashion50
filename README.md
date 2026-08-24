@@ -1,6 +1,6 @@
-# VGR Fashion 50 — index engine
+# VGR 40 — index engine
 
-An autonomous, market-cap–weighted index engine tracking 50 listed fashion,
+An autonomous, market-cap–weighted index engine tracking 40 listed fashion,
 luxury and sportswear companies, built on the same construction principles as
 the S&P 500 (market-cap weighted, **divisor-based**, **float-adjusted**). All
 internal calculations are in **USD**. The engine maintains one Excel workbook

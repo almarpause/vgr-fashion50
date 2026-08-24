@@ -285,7 +285,7 @@ def build_html() -> str:
     head = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VGR 50 — Largest Lifestyle Companies</title>
+<title>VGR 40 — Largest Lifestyle Companies</title>
 <style>
 :root {{ --paper:#F1ECE3; --card:#fff; --panel:#E8E3D9; --ink:#141414;
   --muted:#8a8272; --sub:#6f6a5f; --line:#E0DACE; --rule:#1a1a1a;
@@ -348,13 +348,13 @@ select {{ background:var(--card); color:var(--ink); border:1px solid var(--rule)
 <div class="wrap">
 <header>
   <div class="hd"><span class="figbox">Very Good Retail · Indexes</span><span class="vgr">VGR</span></div>
-  <h1>VGR 50 — Largest Lifestyle Companies</h1>
-  <div class="lede">A market-cap-weighted, float-adjusted index of the 50 largest listed fashion, luxury and sportswear companies, priced daily in US dollars and anchored to 1,000 on {BASE_LABEL}.</div>
+  <h1>VGR 40 — Largest Lifestyle Companies</h1>
+  <div class="lede">A market-cap-weighted, float-adjusted index of the 40 largest listed fashion, luxury and sportswear companies, priced daily in US dollars and anchored to 1,000 on {BASE_LABEL}.</div>
   <div class="meta">{html.escape(meta)}</div>
 </header>
 <div class="kpis">{kpis}</div>
 <div class="card">
-  {_cardhead("VGR 50 is " + finding(ytd), "Daily index level · USD · red line marks the " + BASE_LABEL + " base of 1,000")}
+  {_cardhead("VGR 40 is " + finding(ytd), "Daily index level · USD · red line marks the " + BASE_LABEL + " base of 1,000")}
   <div class="pillrow">{hbtns}</div>
   <div id="idxchart"></div>
 </div>
@@ -363,7 +363,7 @@ select {{ background:var(--card); color:var(--ink); border:1px solid var(--rule)
 {_segment_table(seg_order, subidx)}
 </div>
 <div class="card">
-  {_cardhead("The 50 largest listed lifestyle companies", "Ranked by float-adjusted market cap · local share price · negatives in red · names link to investor relations")}
+  {_cardhead("The 40 largest listed lifestyle companies", "Ranked by float-adjusted market cap · local share price · negatives in red · names link to investor relations")}
 {_constituents_table(recs)}
 </div>
 <div class="card">
@@ -374,7 +374,7 @@ select {{ background:var(--card); color:var(--ink); border:1px solid var(--rule)
 </div>
 <div class="src">{html.escape(src)}</div>
 <div class="foot"><span class="vgr" style="font-size:24px">VGR</span>
-  <span class="fnote">VGR 50 — Largest Lifestyle Companies · generated {gen}</span></div>
+  <span class="fnote">VGR 40 — Largest Lifestyle Companies · generated {gen}</span></div>
 </div>"""
 
     script = """
@@ -450,7 +450,7 @@ function drawCo(t){
   const last=comp[comp.length-1][1], pct=(last/1000-1)*100;
   document.getElementById("cocap").innerHTML=
     "<b>"+NAMES[t]+"</b> rebased 1,000 &rarr; "+last.toFixed(1)+
-    " ("+(pct>=0?"+":"")+pct.toFixed(1)+"% since base). Grey dashed = the VGR 50 index; red line = 1,000.";
+    " ("+(pct>=0?"+":"")+pct.toFixed(1)+"% since base). Grey dashed = the VGR 40 index; red line = 1,000.";
 }
 const sel=document.getElementById("co");
 sel.addEventListener("change",e=>drawCo(e.target.value));

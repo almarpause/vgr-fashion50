@@ -59,7 +59,7 @@ def main(argv: list[str]) -> int:
     fx = FxProvider()
 
     print("=" * 72)
-    print("DRY RUN — VGR Fashion 50 (live data)")
+    print("DRY RUN — VGR 40 (live data)")
     print("=" * 72)
 
     # 1) WEEKLY -------------------------------------------------------------

@@ -172,7 +172,7 @@ class WorkbookManager:
         ws.delete_rows(1, ws.max_row)
         bold = Font(bold=True)
 
-        ws.cell(1, 1, "VGR Fashion 50 — Summary").font = Font(bold=True, size=14)
+        ws.cell(1, 1, "VGR 40 — Summary").font = Font(bold=True, size=14)
         r = 3
         ws.cell(r, 1, "Metric").font = bold
         ws.cell(r, 2, "Value").font = bold
@@ -217,7 +217,7 @@ class WorkbookManager:
         date_col = headers.index("run_date") + 1
 
         chart = LineChart()
-        chart.title = "VGR Fashion 50 — index level"
+        chart.title = "VGR 40 — index level"
         chart.style = 2
         chart.y_axis.title = "Index (base 1000)"
         chart.x_axis.title = "Week"

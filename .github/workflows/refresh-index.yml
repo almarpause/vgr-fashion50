@@ -1,4 +1,4 @@
-name: Refresh VGR Fashion 50
+name: Refresh VGR 40
 
 # Runs the whole pipeline in the cloud on a schedule (no computer needed),
 # regenerates the dashboard + data feed, and publishes them to GitHub Pages.

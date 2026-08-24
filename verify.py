@@ -337,7 +337,7 @@ def _cleanup() -> None:
 
 def main() -> int:
     print("=" * 70)
-    print("VGR Fashion 50 — verification")
+    print("VGR 40 — verification")
     print("=" * 70)
     chk = Check()
     try:

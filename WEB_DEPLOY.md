@@ -1,4 +1,4 @@
-# Putting the Fashion 50 into your VGR "Intelligence" page (auto-updating)
+# Putting the VGR 40 into your VGR "Intelligence" page (auto-updating)
 
 The dashboard is a file your PC makes. To show it **live and self-updating** on
 your Lovable site, two things run in the cloud instead of on your computer:
@@ -33,7 +33,7 @@ git push -u origin main
 ## Step 2 — turn on Pages + let the Action run
 
 - On GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-- **Actions** tab → run **"Refresh VGR Fashion 50"** once (`Run workflow`) to
+- **Actions** tab → run **"Refresh VGR 40"** once (`Run workflow`) to
   publish immediately; after that it runs itself every day at 06:00 UTC.
 - Your dashboard is now live at `https://<user>.github.io/<repo>/` and refreshes
   daily. Change the cadence by editing the `cron:` line in the workflow.
@@ -47,7 +47,7 @@ published version; nothing else to maintain:
 ```html
 <iframe
   src="https://<user>.github.io/<repo>/"
-  title="VGR 50 — Largest Lifestyle Companies"
+  title="VGR 40 — Largest Lifestyle Companies"
   style="width:100%;height:1600px;border:0;border-radius:16px;"
   loading="lazy">
 </iframe>
@@ -105,7 +105,7 @@ export default function FashionIndex() {
   return (
     <section className="space-y-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">VGR 50 — Largest Lifestyle Companies</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">VGR 40 — Largest Lifestyle Companies</h2>
         <p className="text-sm opacity-60">
           Market-cap weighted · float-adjusted · USD — base {d.base_date} = 1000 ·
           updated {new Date(d.generated_at).toLocaleDateString()}
