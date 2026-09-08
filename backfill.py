@@ -26,7 +26,7 @@ from engine import config, indexmath  # noqa: E402
 from engine.config import load_constituents, primary_segment  # noqa: E402
 from engine.datafetch import DataProvider  # noqa: E402
 from engine.history import (  # noqa: E402
-    build_index_series, fetch_weekly_history, filter_panel,
+    MIN_HISTORY_WEEKS, build_index_series, fetch_weekly_history, filter_panel,
 )
 from engine.state import EngineState, save_state  # noqa: E402
 from engine.workbook import WorkbookManager  # noqa: E402
@@ -79,6 +79,23 @@ def main(argv: list[str]) -> int:
     if panel.missing_snapshot:
         print(f"  {len(panel.missing_snapshot)} names excluded (no snapshot): "
               f"{panel.missing_snapshot}")
+
+    # ---- Staged membership swap -------------------------------------------- #
+    # Keep the outgoing name in the index until the incoming name has cleared the
+    # history floor (i.e. appears in panel.shares), then drop it in the SAME build
+    # so the count stays at 40 and the swap is atomic (no transient 39/41 state).
+    swap = getattr(config, "PENDING_SWAP", None)
+    if swap and swap.get("add") and swap.get("drop"):
+        add_t, drop_t = swap["add"], swap["drop"]
+        if add_t in panel.shares:                 # incoming name qualified
+            for d in (panel.price, panel.currency, panel.shares,
+                      panel.float_factor):
+                d.pop(drop_t, None)
+            print(f"  staged-swap: {add_t} cleared the {MIN_HISTORY_WEEKS}-point "
+                  f"floor -> dropping {drop_t} (atomic swap now live)")
+        else:
+            print(f"  staged-swap: {add_t} not yet eligible "
+                  f"(needs >={MIN_HISTORY_WEEKS} daily points) -> keeping {drop_t}")
 
     print("Building index series ...")
     res = build_index_series(panel, settings)

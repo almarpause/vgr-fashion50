@@ -27,6 +27,12 @@ WEIGHT_CAP = 0.10                    # single-name cap (10%); None or <=0 disabl
 WEIGHT_CAP_ENABLED = False           # capping OFF: pure float-adjusted weights
 #                                      (flip to True to reinstate the 10% cap)
 
+# Staged membership swap: keep ``drop`` in the index until ``add`` has cleared
+# the history floor (engine.history.MIN_HISTORY_WEEKS), then drop ``drop`` in the
+# SAME build — so the constituent count never leaves 40 and the swap is atomic.
+# Both tickers must be present in constituents.csv.  Set to None when none pending.
+PENDING_SWAP = {"add": "0625.HK", "drop": "ANF"}   # Shein in / Abercrombie out
+
 # Anomaly-guard thresholds (Weekly job).  Fractions, not percents.
 SHARES_CHANGE_THRESHOLD = 0.15      # shares outstanding moved >15% vs last run
 CAP_MOVE_THRESHOLD = 0.25           # a name's cap_usd moved >25% overnight
@@ -60,6 +66,7 @@ FAMILY_CONTROLLED = {
     "KER.PA",   # Kering (Pinault)
     "PAGEIND.NS",  # Page Industries (promoter-held)
     "9983.T",   # Fast Retailing (Yanai)
+    "0625.HK",  # Shein (founder Sky Xu; weighted voting rights, low real float)
 }
 
 
