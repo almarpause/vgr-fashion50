@@ -28,29 +28,71 @@ Index level              = Σ(cap_usd) / Divisor
   index level; it only reshapes reported weights. Flip to `True` to reinstate
   the 10% ceiling.
 
+## What the published feed contains
+
+The GitHub Action (`.github/workflows/refresh-index.yml`) runs every day at
+06:00 UTC and on every push to `main`. Each run rebuilds the whole series from
+scratch:
+
+```bash
+python backfill.py --fresh --history-start 2020-01-01 --base 2025-01-01
+python preflight.py
+python dashboard.py
+```
+
+* The series is **daily**. It starts on the first trading day on or after
+  2020-01-01 and runs to the latest close.
+* The level is rescaled so it equals 1000 on the first trading day on or after
+  2025-01-01 (2 Jan 2025). Values before 2025 are a reconstruction.
+* The index holds **40 constituents**. `constituents.csv` has 41 rows because
+  one swap is staged: Shein (`0625.HK`) replaces Abercrombie & Fitch (`ANF`)
+  once Shein has at least 8 daily price points (`PENDING_SWAP` in
+  `engine/config.py`, `MIN_HISTORY_WEEKS = 8` in `engine/history.py`). Until
+  then Abercrombie stays in and Shein is left out, so the count stays at 40.
+* The workbook sheet is still called **Weekly**, but in the cloud build it holds
+  one row per trading day.
+* `run_weekly.py`, `run_quarterly.py`, `run_annual.py` and the approve scripts
+  are local tools. The Action does not run them.
+
+## Selection rule
+
+The annual screen (`run_annual.py`, `engine/workflows.py`) ranks every name by
+**float-adjusted** USD market cap (`price × shares × float_factor × fx`, from
+`engine/pipeline.py`). A name outside the index is proposed as ADD if it ranks
+40 or better. A member is proposed as DROP if it ranks worse than 60
+(`ADD_RANK = 40`, `DROP_RANK = 60` in `engine/config.py`). Nothing changes until
+a human approves it.
+
+The current 41-row roster in `constituents.csv` is a curated list. No code in
+this repo generates it.
+
+> **To confirm (Pau):** a roster note elsewhere says constituents are selected
+> on full market cap. The engine code ranks on float-adjusted market cap. Decide
+> which rule is the official one, then align the note or the code.
+
 ---
 
 ## Project layout
 
 ```
 vgr-index/
-├── constituents.csv         # the 50-name universe (name, tickers, ccy, segment, hq)
+├── constituents.csv         # 41-row roster, 40 in the index (name, tickers, ccy, segment, hq, IR url)
 ├── candidates.csv           # OPTIONAL extra universe for Annual screening
 ├── engine/
 │   ├── config.py            # paths, thresholds, constituent loader, Settings
 │   ├── indexmath.py         # pure index math (cap, divisor, weight cap) — no I/O
 │   ├── fx.py                # FX→USD: frankfurter → exchangerate.host → yfinance
 │   ├── datafetch.py         # yfinance → stooq → google; minor-unit normalization
-│   ├── history.py           # 5y bulk backfill + weekly index construction
+│   ├── history.py           # bulk price/FX history (daily in the cloud build) + index construction
 │   ├── preflight.py         # early-warning scan (upcoming events / risks)
 │   ├── pipeline.py          # fetch → compute USD caps + audit trail
 │   ├── state.py             # persistent divisor / base / last-run values (JSON)
 │   ├── workbook.py          # Excel I/O (openpyxl), schemas, chart, idempotency
 │   ├── alerts.py            # SMTP email via env vars, log/sheet fallback
 │   └── workflows.py         # Weekly / Quarterly / Annual / Unscheduled logic
-├── backfill.py              # build the real multi-year weekly series (base=1000)
+├── backfill.py              # build the daily series from 2020 (1000 on 2 Jan 2025)
 ├── preflight.py             # early-warning scan -> Watchlist sheet + digest
-├── dashboard.py             # render self-contained Fashion50_Dashboard.html
+├── dashboard.py             # render Fashion50_Dashboard.html + fashion50_data.json
 ├── run_weekly.py            # entry point — automatic value calc
 ├── run_quarterly.py         # entry point — rebalance PROPOSAL
 ├── approve_quarterly.py     # commit an APPROVED rebalance
@@ -68,8 +110,8 @@ The workbook `Fashion50_Index.xlsx` has the four workflow worksheets —
 **Weekly, Quarterly, Annual, Unscheduled** — plus **Summary** (KPIs + index
 chart), **Watchlist** (forward-looking early warning), **Methodology**, and
 supporting sheets **Constituents, FX, Alerts, Divisor_Log, Audit, Prices**
-(weekly per-company price panel) — a full per-run audit trail so any index level
-can be reproduced.
+(per-company price panel, daily in the cloud build). Together they form a
+per-run audit trail, so any index level can be reproduced.
 
 ---
 
@@ -89,26 +131,30 @@ exchangerate.host for FX).
 ## Quick start — get real data you can see
 
 ```bash
-python backfill.py --fresh --base 2025-01-01 --years 2   # weekly series, base = 1000
+python backfill.py --fresh --history-start 2020-01-01 --base 2025-01-01   # daily series, 1000 on the base date
 python dashboard.py --open             # open the visual dashboard in Chrome
 python verify.py                       # 14 checks incl. the live workbook
 ```
 
-Pick the start with `--base YYYY-MM-DD` (e.g. `--base 2025-01-01`) or a rolling
-window with `--years N`. The dashboard shows the index chart, KPIs, segment mix,
-a **full constituents table** (latest price, YTD %, MoM %, full market cap,
-float %, index weight), and an **interactive per-company selector** that rebases
-any stock to 1000 at the same base to compare its evolution against the index.
+`--history-start` sets where the daily history begins (default 2020-01-01).
+`--base` sets the date where the index equals 1000 (default 2025-01-01). The
+dashboard shows the index chart, KPIs, segment sub-indices, a **constituents
+table** (price, change since yesterday, last 7 days, YTD %, full market cap in
+$bn, float %, index weight), and a **per-company selector** that rebases any
+stock to 1000 at the same base to compare it with the index.
 Weights are **float-adjusted** (S&P-style), so a founder-controlled name like
 Inditex (36% float) can outweigh-by-size yet under-weight-by-float versus a
 higher-float peer — the table's *Mkt cap* and *Float* columns make that explicit.
 
-`backfill.py` reconstructs a **real ~5-year weekly index** from live prices +
-FX (base = 1000 at the start), so `Fashion50_Index.xlsx` opens on a **Summary**
-sheet with an index chart and top weights — not a single seed row. Names that
-IPO'd after the base date (On, Birkenstock, Amer Sports) are added on their
-first traded week via the divisor rule, logged to `Divisor_Log` / `Unscheduled`.
-After that, `run_weekly.py` appends each new week onto the series.
+`backfill.py` rebuilds a **daily index** from live prices and FX, from
+`--history-start` to today. It then rescales the whole series so it equals 1000
+on the first trading day on or after `--base`. `Fashion50_Index.xlsx` opens on a
+**Summary** sheet with an index chart and top weights. Names that listed after
+the history start (On, Birkenstock, Amer Sports) are added on their first
+trading day via the divisor rule and logged to `Divisor_Log` / `Unscheduled`.
+A name with fewer than 8 price points is excluded and flagged. Locally,
+`run_weekly.py` can append one row per ISO week onto the series. The cloud build
+does not use it: it rebuilds the full daily series on every run.
 
 > **Historical shares are an approximation.** Free sources don't provide
 > point-in-time share counts, so the backfill holds the **current**
@@ -123,8 +169,8 @@ After that, `run_weekly.py` appends each new week onto the series.
 
 | Job | Command | Effect |
 |-----|---------|--------|
-| **Backfill** | `python backfill.py [--years 5] [--base YYYY-MM-DD] [--fresh]` | Reconstructs the multi-year weekly series (base = 1000), Summary chart, Divisor_Log/Unscheduled adds, and rebuilds `state.json` so live runs continue it. |
-| **Dashboard** | `python dashboard.py [--open]` | Renders self-contained `Fashion50_Dashboard.html` (index chart, KPI tiles, top-10 weights, segment mix). |
+| **Backfill** | `python backfill.py [--history-start YYYY-MM-DD] [--base YYYY-MM-DD] [--fresh]` | Rebuilds the daily series (1000 on the base date), segment sub-indices, Summary chart, Divisor_Log/Unscheduled adds, and `state.json`. This is what the cloud Action runs. |
+| **Dashboard** | `python dashboard.py [--open]` | Renders `Fashion50_Dashboard.html` and the data feed `fashion50_data.json`. |
 | **Pre-flight** | `python preflight.py [--horizon 21]` | **Early warning.** Runs a few days *before* the weekly job; writes the `Watchlist` sheet with upcoming events (share drift, splits, earnings, ex-div, at-risk data, membership drift, review countdowns) + emails a digest. Never changes the index. |
 | **Weekly** | `python run_weekly.py [YYYY-MM-DD] [--force]` | Fully automatic. Fetches prices+FX, computes the level, appends one row. **Never** changes membership/divisor. Idempotent per ISO week (`--force` overwrites the current week). Prints top movers. |
 | **Quarterly** | `python run_quarterly.py [YYYY-MM-DD]` | Refreshes shares/float, re-applies the cap, solves the proposed new divisor, writes a before/after diff with `status = PROPOSED`. Does **not** self-approve. |
@@ -224,6 +270,9 @@ $env:FASHION50_ALERT_TO  = 'desk@example.com'
 
 ## Scheduling
 
+The published feed is refreshed by the GitHub Action (daily, 06:00 UTC). The
+schedules below are for running the weekly, quarterly and annual jobs locally.
+
 ### cron (Linux/macOS)
 
 ```cron
@@ -279,7 +328,7 @@ continuity for every logged change incl. a synthetic add-a-constituent proof,
 (3) weights sum to 100% post-cap with no weight over the cap, (4) no silent
 nulls (un-sourced → `MISSING` + anomaly), (5) Weekly idempotency, (6) the pytest
 suite — **and live-workbook checks** against the real `Fashion50_Index.xlsx` when
-present: ≥100 weekly rows, strictly-increasing weekly dates, every level > 0,
+present: ≥100 rows on the Weekly sheet, strictly increasing dates, every level > 0,
 base ≈ 1000, every `Divisor_Log` change continuous, and current post-cap weights
 summing to 100% ≤ cap. "Green" therefore certifies the **real** artifact.
 
